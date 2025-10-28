@@ -77,6 +77,7 @@ from ui.utils.ui_helpers import is_ui_alive, safe_after, update_path_label, norm
 from services.youtube_upload_service import upload_youtube_thumbnail, get_playlist_id_by_name, add_video_to_playlist
 from services.youtube_upload_api_service import upload_video_to_youtube
 from services.youtube_browser_upload_service import click_with_fallback, init_chrome_driver, YOUTUBE_LOCATORS
+from services.google_api_service import get_google_api_service
 
 # --- Thêm các import cho Google Sheets API ---
 import os.path # Dùng để làm việc với đường dẫn file token/credentials
@@ -244,33 +245,22 @@ from config.constants import (
     APPS_SCRIPT_URL,
     UPDATE_CHECK_INTERVAL_SECONDS, LICENSE_REVALIDATION_INTERVAL_SECONDS,
     DEFAULT_REFERENCE_VIDEO_HEIGHT_FOR_FONT_SCALING,
-    YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION
+    YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION,
+    
+    # Các hằng số vừa được di chuyển
+    APP_MUTEX_NAME,
+    LANGUAGE_MAP_VI,
+    SCOPES,
+    WHISPER_VRAM_REQ_MB,
+    YOUTUBE_CATEGORIES,
+    YOUTUBE_CATEGORY_NAVIGATION_ORDER,
+    API_PRICING_USD
 )
-
-# Tên Mutex duy nhất cho ứng dụng của bạn
-# Sử dụng "Global\\" để mutex có phạm vi toàn hệ thống (recommended)
-APP_MUTEX_NAME = f"Global\\{{PiuApp_{APP_NAME}_{APP_AUTHOR}_Mutex_v1}}"
 
 # SingleInstanceException - MOVED to exceptions/app_exceptions.py - imported above
 # SENSITIVE_WORD_MAPPING - MOVED to config/constants.py
-
-# --- Từ điển ánh xạ mã ngôn ngữ sang tên tiếng Việt ---
-LANGUAGE_MAP_VI = {
-    "vi": "Tiếng Việt",
-    "en": "Tiếng Anh",
-    "ja": "Tiếng Nhật",
-    "zh-cn": "Tiếng Trung (Giản thể)",
-    "fr": "Tiếng Pháp",
-    "ko": "Tiếng Hàn",
-    "de": "Tiếng Đức",
-    "es": "Tiếng Tây Ban Nha",
-    "it": "Tiếng Ý",
-    "th": "Tiếng Thái",
-    "ru": "Tiếng Nga",
-    "pt": "Tiếng Bồ Đào Nha",
-    "hi": "Tiếng Hindi",
-    "auto": "Tự động dò"
-}
+# APP_MUTEX_NAME - MOVED to config/constants.py
+# LANGUAGE_MAP_VI - MOVED to config/constants.py
 
 # --- Xác định đường dẫn yt-dlp --- START BLOCK TO REPLACE ---
 _YTDLP_DEFAULT_COMMAND = "yt-dlp.exe" if sys.platform == "win32" else "yt-dlp"
@@ -313,13 +303,6 @@ else:
     else:
         logging.warning(f"Chạy từ source, không tìm thấy '{_YTDLP_DEFAULT_COMMAND}' trong PATH. Tính năng tải có thể không hoạt động.")
 
-# --- Hằng số Google Sheets API ---
-# Phạm vi quyền: Chỉ yêu cầu quyền đọc dữ liệu từ Sheets
-SCOPES = [
-    'https://www.googleapis.com/auth/spreadsheets.readonly', # Quyền Sheets
-    'https://www.googleapis.com/auth/youtube'                # <<< THAY ĐỔI Ở ĐÂY: Quyền quản lý toàn diện YouTube
-]
-
 # --- Thiết lập Logging (IDEMPOTENT, KHÔNG NHÂN ĐÔI) ---
 import logging, sys, os
 from logging.handlers import RotatingFileHandler
@@ -328,261 +311,16 @@ from logging.handlers import RotatingFileHandler
 # Gọi đúng 1 lần khi app khởi động
 setup_logging()
 
-# Ước tính VRAM yêu cầu (MB) cho các model Whisper khi chạy trên GPU
-WHISPER_VRAM_REQ_MB = {
-    "tiny": 1024,     # Khoảng 1 GB
-    "base": 1024,     # Khoảng 1 GB
-    "small": 2048,    # Khoảng 2 GB
-    "medium": 5120,   # Khoảng 5 GB
-    "large-v1": 10240, # Khoảng 10 GB (large cũ)
-    "large-v2": 10240, # Khoảng 10 GB
-    "large-v3": 10240, # Khoảng 10 GB
-    "large": 10240,    # Thêm "large" chung cho tiện
-}
+# SCOPES - MOVED to config/constants.py
+# WHISPER_VRAM_REQ_MB - MOVED to config/constants.py  
+# YOUTUBE_CATEGORIES - MOVED to config/constants.py
+# YOUTUBE_CATEGORY_NAVIGATION_ORDER - MOVED to config/constants.py
+# API_PRICING_USD - MOVED to config/constants.py
 
-# --- Từ điển ánh xạ ID Danh mục YouTube sang Tiếng Việt ---
-YOUTUBE_CATEGORIES = {
-    '1': 'Phim và hoạt hình',
-    '2': 'Ô tô và xe cộ',
-    '10': 'Nhạc',
-    '15': 'Thú cưng và động vật',
-    '17': 'Thể thao',
-    '19': 'Du lịch và sự kiện',
-    '20': 'Trò chơi',
-    '22': 'Mọi người và blog',
-    '23': 'Hài kịch',
-    '24': 'Giải trí',
-    '25': 'Tin tức và chính trị',
-    '26': 'Hướng dẫn và phong cách',
-    '27': 'Giáo dục',
-    '28': 'Khoa học và công nghệ',
-    '29': 'Tổ chức phi lợi nhuận và hoạt động xã hội'
-    # Các danh mục khác như "Phim ngắn" (18) không có trên giao diện chung nên tạm thời không đưa vào
-}
-
-
-# Ánh xạ Category ID sang số lần nhấn phím Mũi tên xuống
-# Dựa trên thứ tự hiển thị của YouTube
-YOUTUBE_CATEGORY_NAVIGATION_ORDER = {
-    '1':  0,  # Phim và hoạt hình
-    '2':  1,  # Ô tô và xe cộ
-    '10': 2,  # Nhạc
-    '15': 3,  # Thú cưng và động vật
-    '17': 4,  # Thể thao
-    '19': 5,  # Du lịch và sự kiện
-    '20': 6,  # Trò chơi
-    '22': 7,  # Mọi người và blog
-    '23': 8,  # Hài kịch
-    '24': 9,  # Giải trí
-    '25': 10, # Tin tức và chính trị
-    '26': 11, # Hướng dẫn và phong cách
-    '27': 12, # Giáo dục
-    '28': 13, # Khoa học và công nghệ
-    '29': 14, # Tổ chức phi lợi nhuận và hoạt động xã hội
-}
-
-
-# --- BẢNG GIÁ API ƯỚC TÍNH (USD) - CẬP NHẬT THÁNG 8/2025 ---
-# LƯU Ý: GIÁ NÀY CHỈ LÀ ƯỚC TÍNH VÀ CÓ THỂ THAY ĐỔI.
-API_PRICING_USD = {
-    # Tỷ giá USD sang VNĐ (bạn có thể cập nhật)
-    "USD_TO_VND_RATE": 25500,
-
-    # --- Chi phí cho mỗi 1,000,000 (1 triệu) ký tự ---
-    "google_tts_chars_per_million": 4.00,        # Google Cloud TTS (Standard)
-    "google_translate_chars_per_million": 20.00, # Google Cloud Translation API
-    "openai_tts_chars_per_million": 15.00,       # OpenAI TTS (Model tts-1)
-
-    # --- Chi phí cho mỗi ảnh ---
-    "imagen_images_per_image": 0.020, # Google Imagen 3
-    "dalle_images_per_image": 0.040,  # OpenAI DALL-E 3 (Standard)
-
-    # --- Ước tính chi phí cho mỗi LẦN GỌI (do không đếm token/char chính xác) ---
-    # Giả định một lần gọi biên tập/tạo kịch bản tốn khoảng 10,000 ký tự
-    "gemini_calls_per_call_estimate": 0.0025, # Dựa trên giá Gemini 1.5 Pro
-    # Giả định một lần gọi biên tập/dịch tốn khoảng 8,000 tokens (cả input+output)
-    "openai_calls_per_call_estimate": 0.06,  # Dựa trên giá GPT-4o
-}
-
-
-# ==========================
-# PHẦN 3: HÀM HỖ TRỢ TOÀN CỤC
-# ==========================
-
-# DPI and screen utilities
-# MOVED to utils/helpers.py - imported above
-
-# Hàm tiện ích: Lấy đường dẫn tuyệt đối đến tài nguyên (cho PyInstaller)
-# MOVED to utils/helpers.py - imported above
-
-
-# Config management functions
-# MOVED to config/settings.py - imported above
-
-# Hàm tiện ích: Phân tích chuỗi timecode (HH:MM:SS,ms) ra mili giây
-# MOVED to utils/helpers.py - imported above
-
-
-# Hàm tính toán và truyền thời lượng Sub vào sidleshow
-# MOVED to utils/srt_utils.py - imported above
-
-
-# Hàm tiện ích: Kiểm tra CUDA và lấy VRAM GPU
-# MOVED to utils/system_utils.py - imported above
-
-
-# Hàm tiện ích: Tạo tên file an toàn cho hệ điều hành
-# MOVED to utils/helpers.py - imported above
-
-
-# Loại bỏ các tiền tố kiểu "<Series> - " và "Chương <số>:/-" ở đầu tiêu đề.
-# MOVED to utils/helpers.py - imported above
-
-
-# Hàm tiện ích: Đổi tên file để loại bỏ dấu tiếng Việt
-# MOVED to utils/helpers.py - imported above
-
-
-# Hàm tiện ích: Tìm file thực thi ffmpeg và ffprobe
-# MOVED to utils/ffmpeg_utils.py - imported above
-
-
-# Hàm tiện ích: Mở file bằng ứng dụng mặc định của hệ điều hành
-# MOVED to utils/helpers.py - imported above
-
-
-# Menu utility functions moved to ui/widgets/menu_utils.py - imported above
-
-
-
-# Hàm tiện ích: Phát âm thanh bất đồng bộ (trong luồng riêng)
-# MOVED to utils/helpers.py - imported above (dependency on global vars)
-
-
-# Hàm tiện ích: Chạy lệnh hệ thống an toàn hơn
-# MOVED to utils/system_utils.py - imported above
-
-# Hàm tiện ích: Lên lịch tắt máy hệ thống
-# MOVED to utils/system_utils.py - imported above
-
-# Hàm tiện ích: Hủy lịch tắt máy hệ thống
-# MOVED to utils/system_utils.py - imported above
 
 # ============================================================
-# HÀM get_sheets_service ĐƯỢC THAY THẾ BẰNG get_google_api_service
+# HÀM get_google_api_service ĐÃ ĐƯỢC DI CHUYỂN ĐẾN services/google_api_service.py
 # ============================================================
-def get_google_api_service(api_name, api_version): # THAY ĐỔI ĐỊNH NGHĨA HÀM
-
-    creds = None
-    # Xác định đường dẫn cho file token và credentials (Giữ nguyên logic cũ của bạn)
-    token_path = None
-    if APPDIRS_AVAILABLE:
-        try:
-            user_data_dir_for_token = appdirs.user_data_dir(appname=APP_NAME, appauthor=APP_AUTHOR)
-            os.makedirs(user_data_dir_for_token, exist_ok=True)
-            token_path = os.path.join(user_data_dir_for_token, TOKEN_FILENAME)
-            logging.info(f"[Auth] Sẽ sử dụng đường dẫn token (appdirs): {token_path}")
-        except Exception as e_appdirs:
-            logging.error(f"[Auth] Lỗi khi lấy user_data_dir từ appdirs: {e_appdirs}. Fallback về thư mục hiện tại cho token.")
-            base_dir_fallback = os.getcwd()
-            token_path = os.path.join(base_dir_fallback, TOKEN_FILENAME)
-    else:
-        logging.warning("[Auth] Thư viện 'appdirs' không khả dụng. Token sẽ được lưu trong thư mục làm việc hiện tại.")
-        base_dir_fallback = os.path.dirname(os.path.abspath(__file__)) if hasattr(sys, 'frozen') and sys.frozen and hasattr(sys, '_MEIPASS') else \
-                           os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals() else os.getcwd()
-        token_path = os.path.join(base_dir_fallback, TOKEN_FILENAME)
-        logging.info(f"[Auth] Sẽ sử dụng đường dẫn token (fallback): {token_path}")
-
-    credentials_path = resource_path(CREDENTIALS_FILENAME)
-    logging.info(f"[Auth] Sẽ sử dụng đường dẫn credentials: {credentials_path}")
-
-    # 1. Tải credentials từ file token.json nếu tồn tại (Giữ nguyên logic cũ của bạn)
-    if os.path.exists(token_path):
-        try:
-            # Quan trọng: Khi tải token, PHẢI truyền TẤT CẢ các SCOPES mà ứng dụng có thể sử dụng.
-            # Nếu không, khi token được làm mới, nó có thể chỉ giữ lại scopes của API đầu tiên được gọi.
-            creds = Credentials.from_authorized_user_file(token_path, SCOPES) # SỬ DỤNG SCOPES TOÀN CỤC MỚI
-            logging.info(f"[Auth] Đã tải credentials từ: {token_path}")
-        except Exception as e:
-            logging.error(f"[Auth] Lỗi khi tải file token '{token_path}': {e}. Đang thử xác thực lại.")
-            try:
-                os.remove(token_path)
-                logging.info(f"[Auth] Đã xóa file token có thể bị lỗi: {token_path}")
-            except OSError as del_err: logging.error(f"[Auth] Không thể xóa file token bị lỗi '{token_path}': {del_err}")
-            creds = None
-
-    # 2. Nếu không có credentials hợp lệ (hoặc không có file token): (Giữ nguyên logic cũ của bạn)
-    if not creds or not creds.valid:
-        # 2a. Thử làm mới token nếu nó hết hạn và có refresh_token (Giữ nguyên logic cũ của bạn)
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                logging.info("[Auth] Đang làm mới token truy cập...")
-                creds.refresh(Request())
-                logging.info("[Auth] Token truy cập đã được làm mới thành công.")
-                try: # Lưu lại token đã làm mới
-                    with open(token_path, 'w') as token_file:
-                        token_file.write(creds.to_json())
-                    logging.info(f"[Auth] Đã lưu token được làm mới vào: {token_path}")
-                except Exception as e: logging.error(f"[Auth] Lỗi khi lưu file token được làm mới '{token_path}': {e}")
-            except Exception as e:
-                logging.error(f"[Auth] Lỗi khi làm mới token: {e}. Cần xác thực lại.")
-                if os.path.exists(token_path):
-                    try: os.remove(token_path); logging.info(f"[Auth] Đã xóa file token do lỗi làm mới: {token_path}")
-                    except OSError as del_err: logging.error(f"[Auth] Không thể xóa file token sau lỗi làm mới '{token_path}': {del_err}")
-                creds = None
-
-        # 2b. Nếu vẫn chưa có creds -> Chạy luồng xác thực mới (Giữ nguyên logic cũ của bạn)
-        if not creds:
-            logging.info("[Auth] Không tìm thấy credentials hợp lệ, đang khởi tạo luồng OAuth...")
-            if not os.path.exists(credentials_path):
-                logging.error(f"[Auth] QUAN TRỌNG: Không tìm thấy file credentials tại đường dẫn dự kiến: {credentials_path}")
-                messagebox.showerror("Lỗi Credentials", f"Không tìm thấy file credentials:\n{credentials_path}\n\nVui lòng đặt file '{CREDENTIALS_FILENAME}' đúng vị trí.")
-                return None
-
-            try:
-                # Quan trọng: Khi chạy luồng OAuth, PHẢI truyền TẤT CẢ các SCOPES cần thiết
-                flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES) # SỬ DỤNG SCOPES TOÀN CỤC MỚI
-                creds = flow.run_local_server(port=0,
-                                               authorization_prompt_message="Vui lòng cấp quyền truy cập Google API cho Piu (Sheets & YouTube):",
-                                               success_message="Xác thực thành công! Bạn có thể đóng tab trình duyệt này.")
-                logging.info("[Auth] Luồng OAuth hoàn tất thành công.")
-                if creds:
-                    try: # Lưu credentials mới
-                        with open(token_path, 'w') as token_file:
-                            token_file.write(creds.to_json())
-                        logging.info(f"[Auth] Đã lưu token truy cập mới vào: {token_path}")
-                    except Exception as e:
-                        logging.error(f"[Auth] Lỗi khi lưu file token mới '{token_path}': {e}")
-                        messagebox.showwarning("Lỗi Lưu Token", f"Đã xác thực thành công nhưng không thể lưu token:\n{e}\n\nBạn có thể cần cấp quyền lại lần sau.")
-            except FileNotFoundError:
-                logging.error(f"[Auth] Không tìm thấy file credentials '{credentials_path}' trong quá trình OAuth.")
-                messagebox.showerror("Lỗi Credentials", f"Không tìm thấy file '{CREDENTIALS_FILENAME}' khi đang xác thực.")
-                return None
-            except Exception as e:
-                logging.error(f"[Auth] Lỗi trong quá trình OAuth: {e}", exc_info=True)
-                messagebox.showerror("Lỗi Xác Thực", f"Đã xảy ra lỗi trong quá trình yêu cầu quyền:\n{e}\n\nVui lòng thử lại.")
-                return None
-
-    # 3. Xây dựng và trả về đối tượng service nếu có credentials hợp lệ (Giữ nguyên logic cũ của bạn)
-    if creds and creds.valid:
-        try:
-            # THAY ĐỔI: Sử dụng api_name và api_version được truyền vào
-            service = build(api_name, api_version, credentials=creds) # THAY ĐỔI Ở ĐÂY
-            logging.info(f"[Auth] Đối tượng service '{api_name} v{api_version}' đã được tạo thành công.")
-            return service
-        except HttpError as err:
-            logging.error(f"[Auth] Đã xảy ra lỗi khi xây dựng service '{api_name}': {err}")
-            messagebox.showerror("Lỗi Service API", f"Không thể khởi tạo kết nối đến Google API ({api_name}):\n{err}")
-            return None
-        except Exception as e:
-            logging.error(f"[Auth] Lỗi không mong muốn khi xây dựng service '{api_name}': {e}", exc_info=True)
-            messagebox.showerror("Lỗi Không Xác Định", f"Lỗi không mong muốn khi khởi tạo API ({api_name}):\n{e}")
-            return None
-    else:
-        logging.error("[Auth] Không thể lấy được credentials hợp lệ sau tất cả các bước.")
-        messagebox.showerror("Lỗi Xác Thực Cuối Cùng", "Không thể lấy được thông tin xác thực hợp lệ. Vui lòng kiểm tra file credentials.json và thử lại.")
-        return None
-
 
 # =======================================================================================================================================================================
 # LỚP MÀN HÌNH CHỜ (SPLASH SCREEN)

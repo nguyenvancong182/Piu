@@ -235,3 +235,96 @@ DEFAULT_SUBTITLE_OUTLINE_COLOR = "0,0,0"
 DEFAULT_SUBTITLE_OUTLINE_OPACITY = 100
 DEFAULT_SUBTITLE_MARGIN_V = 60
 
+# ==========================
+# CÁC HẰNG SỐ ĐƯỢC DI CHUYỂN TỪ PIU.PY
+# ==========================
+
+# Tên Mutex duy nhất cho ứng dụng
+APP_MUTEX_NAME = f"Global\\{{PiuApp_{APP_NAME}_{APP_AUTHOR}_Mutex_v1}}"
+
+# --- Từ điển ánh xạ mã ngôn ngữ sang tên tiếng Việt ---
+LANGUAGE_MAP_VI = {
+    "vi": "Tiếng Việt",
+    "en": "Tiếng Anh",
+    "ja": "Tiếng Nhật",
+    "zh-cn": "Tiếng Trung (Giản thể)",
+    "fr": "Tiếng Pháp",
+    "ko": "Tiếng Hàn",
+    "de": "Tiếng Đức",
+    "es": "Tiếng Tây Ban Nha",
+    "it": "Tiếng Ý",
+    "th": "Tiếng Thái",
+    "ru": "Tiếng Nga",
+    "pt": "Tiếng Bồ Đào Nha",
+    "hi": "Tiếng Hindi",
+    "auto": "Tự động dò"
+}
+
+# --- Hằng số Google Sheets API ---
+SCOPES = [
+    'https://www.googleapis.com/auth/spreadsheets.readonly', # Quyền Sheets
+    'https://www.googleapis.com/auth/youtube'                # Quyền quản lý toàn diện YouTube
+]
+
+# Ước tính VRAM yêu cầu (MB) cho các model Whisper khi chạy trên GPU
+WHISPER_VRAM_REQ_MB = {
+    "tiny": 1024,     # Khoảng 1 GB
+    "base": 1024,     # Khoảng 1 GB
+    "small": 2048,    # Khoảng 2 GB
+    "medium": 5120,   # Khoảng 5 GB
+    "large-v1": 10240, # Khoảng 10 GB (large cũ)
+    "large-v2": 10240, # Khoảng 10 GB
+    "large-v3": 10240, # Khoảng 10 GB
+    "large": 10240,    # Thêm "large" chung cho tiện
+}
+
+# --- Từ điển ánh xạ ID Danh mục YouTube sang Tiếng Việt ---
+YOUTUBE_CATEGORIES = {
+    '1': 'Phim và hoạt hình',
+    '2': 'Ô tô và xe cộ',
+    '10': 'Nhạc',
+    '15': 'Thú cưng và động vật',
+    '17': 'Thể thao',
+    '19': 'Du lịch và sự kiện',
+    '20': 'Trò chơi',
+    '22': 'Mọi người và blog',
+    '23': 'Hài kịch',
+    '24': 'Giải trí',
+    '25': 'Tin tức và chính trị',
+    '26': 'Hướng dẫn và phong cách',
+    '27': 'Giáo dục',
+    '28': 'Khoa học và công nghệ',
+    '29': 'Tổ chức phi lợi nhuận và hoạt động xã hội'
+}
+
+# Ánh xạ Category ID sang số lần nhấn phím Mũi tên xuống
+YOUTUBE_CATEGORY_NAVIGATION_ORDER = {
+    '1':  0,  # Phim và hoạt hình
+    '2':  1,  # Ô tô và xe cộ
+    '10': 2,  # Nhạc
+    '15': 3,  # Thú cưng và động vật
+    '17': 4,  # Thể thao
+    '19': 5,  # Du lịch và sự kiện
+    '20': 6,  # Trò chơi
+    '22': 7,  # Mọi người và blog
+    '23': 8,  # Hài kịch
+    '24': 9,  # Giải trí
+    '25': 10, # Tin tức và chính trị
+    '26': 11, # Hướng dẫn và phong cách
+    '27': 12, # Giáo dục
+    '28': 13, # Khoa học và công nghệ
+    '29': 14, # Tổ chức phi lợi nhuận và hoạt động xã hội
+}
+
+# --- BẢNG GIÁ API ƯỚC TÍNH (USD) ---
+API_PRICING_USD = {
+    "USD_TO_VND_RATE": 25500,
+    "google_tts_chars_per_million": 4.00,
+    "google_translate_chars_per_million": 20.00,
+    "openai_tts_chars_per_million": 15.00,
+    "imagen_images_per_image": 0.020,
+    "dalle_images_per_image": 0.040,
+    "gemini_calls_per_call_estimate": 0.0025,
+    "openai_calls_per_call_estimate": 0.06,
+}
+
