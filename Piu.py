@@ -72,6 +72,7 @@ from ui.popups.dalle_settings import DalleSettingsWindow
 from ui.popups.metadata_manager import MetadataManagerWindow
 from ui.popups.subtitle_style_settings import SubtitleStyleSettingsWindow
 from ui.tabs.ai_editor_tab import AIEditorTab
+from ui.tabs.download_tab import DownloadTab
 from utils.logging_utils import setup_logging, log_failed_task
 from ui.utils.ui_helpers import is_ui_alive, safe_after, update_path_label, norm_no_diacritics, is_readyish, locked_msg_for_view, ready_msg_for_view
 from services.youtube_upload_service import upload_youtube_thumbnail, get_playlist_id_by_name, add_video_to_playlist
@@ -1714,7 +1715,7 @@ class SubtitleApp(ctk.CTk):
 
         # Khai báo các frame cho từng tab
         self.subtitle_view_frame = ctk.CTkFrame(self.main_content_frame, fg_color="transparent")
-        self.download_view_frame = ctk.CTkFrame(self.main_content_frame, fg_color="transparent")
+        self.download_view_frame = DownloadTab(master=self.main_content_frame, master_app=self)
         self.dubbing_view_frame = ctk.CTkFrame(self.main_content_frame, fg_color="transparent")
         self.youtube_upload_view_frame = ctk.CTkFrame(self.main_content_frame, fg_color="transparent")
         
@@ -1722,7 +1723,6 @@ class SubtitleApp(ctk.CTk):
 
         # Gọi các hàm để tạo nội dung cho từng tab
         self._create_subtitle_tab(self.subtitle_view_frame)
-        self._create_download_tab(self.download_view_frame)
         self._create_dubbing_tab(self.dubbing_view_frame)
         self._create_youtube_upload_tab(self.youtube_upload_view_frame) 
         
@@ -1874,439 +1874,6 @@ class SubtitleApp(ctk.CTk):
         logging.info(f"UI được khởi tạo với view: {final_view_to_set}")
 
         logging.debug("Khởi tạo UI (tối ưu) hoàn tất.")
-
-
-#===========================================================================================================================================================================
-# HÀM DỰNG GIAO DIỆN: TẠO CÁC THÀNH PHẦN UI CHO TAB 'TẢI XUỐNG'
-    def _create_download_action_buttons_section(self, parent_frame, special_action_button_color, special_action_hover_color, danger_button_color, danger_button_hover_color):
-        """
-        Create action buttons section for Download tab.
-        
-        Args:
-            parent_frame: Parent frame to add buttons to
-            special_action_button_color: Color tuple for special action button
-            special_action_hover_color: Hover color tuple for special action button
-            danger_button_color: Color tuple for danger button
-            danger_button_hover_color: Hover color tuple for danger button
-        """
-        action_buttons_main_frame_download = ctk.CTkFrame(parent_frame, fg_color="transparent")
-        action_buttons_main_frame_download.pack(pady=10, padx=10, fill="x")
-
-        # Hàng 1: "Thêm từ Sheet" (Trái), "ALL (D/S/D)" (Phải)
-        btn_row_1_download = ctk.CTkFrame(action_buttons_main_frame_download, fg_color="transparent")
-        btn_row_1_download.pack(fill="x", pady=(0, 5))
-
-        self.add_sheet_button = ctk.CTkButton(
-            btn_row_1_download,
-            text="📑 Thêm từ Sheet",
-            height=35, font=("Segoe UI", 13, "bold"),
-            command=self.fetch_links_from_sheet,
-            state="normal"
-        )
-        self.add_sheet_button.pack(side="left", expand=True, fill="x", padx=(0, 2))
-
-        self.all_button = ctk.CTkButton(
-            btn_row_1_download,
-            text="🚀 ALL (D/S/D)",
-            height=35, font=("Segoe UI", 13, "bold"),
-            command=self.start_download_and_sub,
-            fg_color=special_action_button_color,
-            hover_color=special_action_hover_color
-        )
-        self.all_button.pack(side="left", expand=True, fill="x", padx=(3, 0))
-
-        # Hàng 2: "Bắt đầu Tải (Chỉ Tải)" (chiếm cả hàng)
-        self.download_start_button = ctk.CTkButton(
-            action_buttons_main_frame_download,
-            text="✅ Bắt đầu Tải (Chỉ Tải)",
-            height=45, font=("Segoe UI", 15, "bold"),
-            command=self.start_download,
-        )
-        self.download_start_button.pack(fill="x", pady=5)
-
-        # Hàng 3: "Dừng Tải" (trái) và "Mở Thư Mục Tải" (phải)
-        btn_row_3_download_controls = ctk.CTkFrame(action_buttons_main_frame_download, fg_color="transparent")
-        btn_row_3_download_controls.pack(fill="x", pady=(5, 0))
-        btn_row_3_download_controls.grid_columnconfigure((0, 1), weight=1)
-
-        self.download_stop_button = ctk.CTkButton(
-            btn_row_3_download_controls,
-            text="🛑 Dừng Tải",
-            height=35, font=("Segoe UI", 13, "bold"),
-            command=self.stop_download,
-            fg_color=danger_button_color,
-            hover_color=danger_button_hover_color,
-            state=ctk.DISABLED,
-            border_width=0
-        )
-        self.download_stop_button.grid(row=0, column=0, padx=(0, 2), pady=0, sticky="ew")
-
-        self.open_download_folder_button = ctk.CTkButton(
-            btn_row_3_download_controls,
-            text="📂 Mở Thư Mục Tải",
-            height=35, font=("Segoe UI", 13, "bold"),
-            command=self.open_download_folder,
-            border_width=0
-        )
-        self.open_download_folder_button.grid(row=0, column=1, padx=(3, 0), pady=0, sticky="ew")
-
-    def _create_download_input_config_section(self, parent_frame, card_bg_color):
-        """
-        Create input config section for Download tab.
-        
-        Args:
-            parent_frame: Parent frame to add section to
-            card_bg_color: Background color tuple for the card frame
-        """
-        input_config_frame = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-        input_config_frame.pack(fill="x", padx=10, pady=(0, 5))
-        input_config_frame.grid_columnconfigure(0, weight=1)
-        input_config_frame.grid_columnconfigure(1, weight=0)
-
-        input_label = ctk.CTkLabel(input_config_frame, text="🖋 Nhập link", anchor='w', font=("Segoe UI", 12, "bold"))
-        input_label.grid(row=0, column=0, padx=(10, 5), pady=(5, 0), sticky="w")
-
-        if not hasattr(self, 'download_playlist_check'):
-            self.download_playlist_check = ctk.CTkCheckBox(input_config_frame, text="Tải cả playlist?", variable=self.download_playlist_var, checkbox_height=18, checkbox_width=18, font=("Segoe UI", 12))
-        self.download_playlist_check.grid(row=0, column=1, padx=(5, 10), pady=(5, 0), sticky="e")
-
-        if not hasattr(self, 'download_url_text') or self.download_url_text is None:
-            self.download_url_text = ctk.CTkTextbox(input_config_frame) 
-        self.download_url_text.configure(height=100, wrap="word", font=("Consolas", 10), border_width=1)
-        self.download_url_text.grid(row=1, column=0, columnspan=2, padx=10, pady=(2, 5), sticky="ew")
-        self.download_url_text.bind("<Button-3>", textbox_right_click_menu)
-        
-        # Frame chứa 2 checkbox tối ưu mobile và tắt sheet
-        checkbox_frame_bottom = ctk.CTkFrame(input_config_frame, fg_color="transparent")
-        checkbox_frame_bottom.grid(row=2, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="ew")
-        checkbox_frame_bottom.grid_columnconfigure((0, 1), weight=1)
-
-        if not hasattr(self, 'optimize_for_mobile_var'):
-            self.optimize_for_mobile_var = ctk.BooleanVar(value=self.cfg.get("optimize_for_mobile", False))
-        self.optimize_mobile_checkbox = ctk.CTkCheckBox(
-            checkbox_frame_bottom, text="Tối ưu Mobile", variable=self.optimize_for_mobile_var,
-            onvalue=True, offvalue=False, checkbox_width=18, checkbox_height=18,
-            font=("Segoe UI", 11), command=self.save_current_config
-        )
-        self.optimize_mobile_checkbox.grid(row=0, column=0, sticky="w")
-
-        if not hasattr(self, 'disable_sheet_check_checkbox'):
-            self.disable_sheet_check_checkbox = ctk.CTkCheckBox(checkbox_frame_bottom, text="Tắt kiểm tra Sheet", variable=self.disable_auto_sheet_check_var, checkbox_height=18, checkbox_width=18, font=("Segoe UI", 11), command=self.save_current_config)
-        self.disable_sheet_check_checkbox.grid(row=0, column=1, sticky="e")
-
-    def _create_download_output_config_section(self, parent_frame, card_bg_color):
-        """
-        Create output config section for Download tab.
-        
-        Args:
-            parent_frame: Parent frame to add section to
-            card_bg_color: Background color tuple for the card frame
-        """
-        output_config_frame = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-        output_config_frame.pack(fill="x", padx=10, pady=(0, 5))
-        ctk.CTkLabel(output_config_frame, text="📁 Đầu ra & Đổi tên", font=("Segoe UI", 12, "bold")).pack(pady=(5,2), padx=10, anchor="w")
-        path_frame_inner = ctk.CTkFrame(output_config_frame, fg_color="transparent")
-        path_frame_inner.pack(fill="x", padx=10, pady=(0, 5))
-        ctk.CTkLabel(path_frame_inner, text="Lưu tại:", width=50, anchor='w').pack(side="left")
-        # Dùng màu theme-aware cho text phụ
-        self.download_path_display_label = ctk.CTkLabel(path_frame_inner, textvariable=self.download_path_var, anchor="w", wraplength=170, font=("Segoe UI", 10), text_color=("gray30", "gray70"))
-        self.download_path_display_label.pack(side="left", fill="x", expand=True, padx=(5, 5))
-        ctk.CTkButton(path_frame_inner, text="Chọn", width=50, height=28, command=self.select_download_path).pack(side="left")
-        if hasattr(self, 'update_idletasks'): self.update_idletasks()
-        display_path = self.download_path_var.get()
-        self.download_path_display_label.configure(text=display_path if display_path else "Chưa chọn")
-        self.download_path_var.trace_add("write", lambda *a: self.download_path_display_label.configure(text=self.download_path_var.get() or "Chưa chọn"))
-        self.download_rename_check = ctk.CTkCheckBox(output_config_frame, text="Đổi tên hàng loạt?", variable=self.download_rename_var, checkbox_height=18, checkbox_width=18, command=self.toggle_download_rename_entry)
-        self.download_rename_check.pack(anchor='w', padx=10, pady=(5,2))
-        self.download_rename_entry_frame = ctk.CTkFrame(output_config_frame, fg_color="transparent")
-        self.download_rename_entry_frame.pack(fill="x", padx=10, pady=(0, 10))
-        ctk.CTkLabel(self.download_rename_entry_frame, text="Tên chung:", width=70, anchor='w').pack(side="left")
-        self.download_rename_entry = ctk.CTkEntry(self.download_rename_entry_frame, textvariable=self.download_rename_box_var, state="disabled", font=("Consolas", 10))
-        self.download_rename_entry.pack(side="left", fill="x", expand=True)
-        self.toggle_download_rename_entry()
-
-    def _create_download_format_quality_section(self, parent_frame, card_bg_color):
-        """
-        Create format & quality config section for Download tab.
-        
-        Args:
-            parent_frame: Parent frame to add section to
-            card_bg_color: Background color tuple for the card frame
-        """
-        format_config_frame = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-        format_config_frame.pack(fill="x", padx=10, pady=(0, 5))
-        ctk.CTkLabel(format_config_frame, text="⚙️ Định dạng & Chất lượng", font=("Segoe UI", 12, "bold")).pack(pady=(5,5), padx=10, anchor="w")
-
-        mode_frame_inner = ctk.CTkFrame(format_config_frame, fg_color="transparent")
-        mode_frame_inner.pack(fill="x", padx=10, pady=(5,5))
-        modes = [("Video", "video"), ("MP3", "mp3"), ("Cả 2", "both")]
-        mode_frame_inner.grid_columnconfigure((0, 1, 2), weight=1)
-        for i, (text, value) in enumerate(modes):
-             rb = ctk.CTkRadioButton(mode_frame_inner, text=text, variable=self.download_mode_var, value=value, radiobutton_width=18, radiobutton_height=18)
-             rb.grid(row=0, column=i, padx=5, pady=5, sticky="w")
-
-        qual_frame_inner = ctk.CTkFrame(format_config_frame, fg_color="transparent")
-        qual_frame_inner.pack(fill="x", padx=10, pady=(0,10))
-        ctk.CTkLabel(qual_frame_inner, text="Video:", width=50, anchor='w').grid(row=0, column=0, pady=(0,5), sticky='w')
-        video_options = ["best", "2160p", "1440p", "1080p", "720p", "480p", "360p"]
-        current_v_quality = self.download_video_quality_var.get()
-        if current_v_quality not in video_options: current_v_quality = "1080p"; self.download_video_quality_var.set(current_v_quality)
-        self.download_video_quality_menu = ctk.CTkOptionMenu(qual_frame_inner, variable=self.download_video_quality_var, values=video_options)
-        self.download_video_quality_menu.grid(row=0, column=1, sticky='ew', padx=5)
-        ctk.CTkLabel(qual_frame_inner, text="MP3:", width=50, anchor='w').grid(row=1, column=0, pady=(5,5), sticky='w')
-        audio_options = ["best", "320k", "256k", "192k", "128k", "96k"]
-        current_a_quality = self.download_audio_quality_var.get();
-        if current_a_quality not in audio_options: current_a_quality = "320k"; self.download_audio_quality_var.set(current_a_quality)
-        self.download_audio_quality_menu = ctk.CTkOptionMenu(qual_frame_inner, variable=self.download_audio_quality_var, values=audio_options)
-        self.download_audio_quality_menu.grid(row=1, column=1, sticky='ew', padx=5)
-        qual_frame_inner.grid_columnconfigure(1, weight=1)
-
-    def _create_download_auto_options_sections(self, parent_frame, card_bg_color):
-        """
-        Create auto options sections (dubbing & upload) for Download tab.
-        
-        Args:
-            parent_frame: Parent frame to add sections to
-            card_bg_color: Background color tuple for the card frame
-        """
-        # Auto dubbing checkbox
-        self.download_auto_dub_config_frame = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-        self.download_auto_dub_config_frame.pack(fill="x", padx=10, pady=(0, 5)) 
-        self.auto_dub_checkbox = ctk.CTkCheckBox(
-            self.download_auto_dub_config_frame, 
-            text="🎙 Tự Động Thuyết Minh (Sau Sub)",
-            variable=self.download_auto_dub_after_sub_var,
-            checkbox_height=18, checkbox_width=18,
-            font=("Segoe UI", 13)
-        )
-        self.auto_dub_checkbox.pack(side="left", anchor="w", padx=10, pady=10)
-
-        # Auto upload checkbox
-        self.download_auto_upload_config_frame = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-        self.download_auto_upload_config_frame.pack(fill="x", padx=10, pady=(0, 5))
-        self.auto_upload_dl_checkbox = ctk.CTkCheckBox(
-            self.download_auto_upload_config_frame,
-            text="📤 Tự động Upload YT (Sau khi tải xong)",
-            variable=self.auto_upload_after_download_var,
-            checkbox_height=18, checkbox_width=18,
-            font=("Segoe UI", 13)
-        )
-        self.auto_upload_dl_checkbox.pack(side="left", anchor="w", padx=10, pady=10)
-
-    def _create_download_extras_cookies_sections(self, parent_frame, card_bg_color):
-        """
-        Create extras options and cookies config sections for Download tab.
-        
-        Args:
-            parent_frame: Parent frame to add sections to
-            card_bg_color: Background color tuple for the card frame
-        """
-        # Extras options
-        extras_config_frame = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-        extras_config_frame.pack(fill="x", padx=10, pady=(0, 10))
-        ctk.CTkLabel(extras_config_frame, text="✨ Tùy chọn khác", font=("Segoe UI", 12, "bold")).pack(pady=(5,5), padx=10, anchor="w")
-        options_grid = ctk.CTkFrame(extras_config_frame, fg_color="transparent")
-        options_grid.pack(fill="x", padx=10, pady=(0, 10))
-        self.download_sound_check = ctk.CTkCheckBox(options_grid, text="🔔", variable=self.download_sound_var, checkbox_height=18, checkbox_width=18, command=self.toggle_download_sound_button, width=20)
-        self.download_sound_check.grid(row=0, column=0, padx=(0, 0), sticky='w')
-        self.download_sound_button = ctk.CTkButton(options_grid, text=" Chọn Âm", width=60, height=28, state="disabled", command=self.select_download_sound)
-        self.download_sound_button.grid(row=0, column=1, padx=(5, 5), sticky='w')
-        self.download_shutdown_check = ctk.CTkCheckBox(options_grid, text="⏰ Tắt máy", variable=self.download_shutdown_var, checkbox_height=18, checkbox_width=18)
-        self.download_shutdown_check.grid(row=0, column=2, padx=(10, 0), sticky='w')
-        self.download_stop_on_error_check = ctk.CTkCheckBox(options_grid, text="✋ Dừng khi lỗi", variable=self.download_stop_on_error_var, checkbox_height=18, checkbox_width=18)
-        self.download_stop_on_error_check.grid(row=0, column=3, padx=(10, 0), sticky='w')
-
-        # Cookies config
-        cookies_config_frame = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-        cookies_config_frame.pack(fill="x", padx=10, pady=(0, 10))
-        cookies_config_frame.grid_columnconfigure(1, weight=1)
-
-        self.download_use_cookies_checkbox = ctk.CTkCheckBox(
-            cookies_config_frame,
-            text="🍪 Sử dụng Cookies trình duyệt",
-            variable=self.download_use_cookies_var,
-            font=("Segoe UI", 12, "bold"),
-            checkbox_height=18, checkbox_width=18,
-            command=self._toggle_cookies_button_state
-        )
-        self.download_use_cookies_checkbox.grid(row=0, column=0, columnspan=3, padx=10, pady=(10, 5), sticky="w")
-
-        self.download_cookies_path_label = ctk.CTkLabel(cookies_config_frame, text="(Chưa chọn file cookies.txt)", text_color="gray", font=("Segoe UI", 10), wraplength=350, padx=5)
-        self.download_cookies_path_label.grid(row=1, column=0, columnspan=2, padx=(25, 5), pady=2, sticky="ew")
-
-        self.download_cookies_button = ctk.CTkButton(cookies_config_frame, text="Chọn file Cookies...", width=120, command=self._select_cookies_file)
-        self.download_cookies_button.grid(row=1, column=2, padx=10, pady=2, sticky="e")
-
-        self.after(50, self._toggle_cookies_button_state)
-        self.after(100, self.toggle_download_sound_button)
-
-    def _create_download_right_panel(self, main_frame, panel_bg_color, card_bg_color, log_textbox_bg_color, special_action_button_color, special_action_hover_color):
-        """
-        Create right panel (queue, log, progress) for Download tab.
-        
-        Args:
-            main_frame: Main frame to add panel to
-            panel_bg_color: Panel background color
-            card_bg_color: Card background color
-            log_textbox_bg_color: Log textbox background color
-            special_action_button_color: Special button color
-            special_action_hover_color: Special button hover color
-        """
-        right_panel_dl = ctk.CTkFrame(main_frame, fg_color=panel_bg_color, corner_radius=12)
-        right_panel_dl.grid(row=0, column=1, pady=0, sticky="nsew")
-
-        # Cấu hình grid cho panel phải: Hàng 1 (log) sẽ là hàng co giãn chính
-        right_panel_dl.grid_columnconfigure(0, weight=1)
-        right_panel_dl.grid_rowconfigure(0, weight=0)  # Hàng 0: Hàng chờ (không co giãn)
-        right_panel_dl.grid_rowconfigure(1, weight=1)  # Hàng 1: Ô Log (sẽ co giãn để lấp đầy không gian)
-        right_panel_dl.grid_rowconfigure(2, weight=0)  # Hàng 2: Progress bar (không co giãn)
-
-        # Hàng 0: Hàng chờ
-        self.download_queue_section = ctk.CTkScrollableFrame(right_panel_dl, label_text="📋 Hàng chờ (Download)", label_font=("Poppins", 14, "bold"), height=150)
-        self.download_queue_section.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 5))
-
-        # Hàng 1: Ô Log
-        log_section_frame = ctk.CTkFrame(right_panel_dl, fg_color="transparent")
-        log_section_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 5))
-        log_section_frame.grid_rowconfigure(1, weight=1) # Cho textbox log bên trong giãn ra
-        log_section_frame.grid_columnconfigure(0, weight=1)
-
-        log_header = ctk.CTkFrame(log_section_frame, fg_color="transparent")
-        log_header.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        ctk.CTkLabel(log_header, text="📜 Log Tải Xuống:", font=("Poppins", 15, "bold")).pack(side="left", padx=(0,10))
-
-        # Khung chứa các nút trên header của log
-        buttons_container_log_header = ctk.CTkFrame(log_header, fg_color=card_bg_color, corner_radius=6)
-        buttons_container_log_header.pack(side="right", fill="x", expand=True, padx=(5,0))
-        num_log_header_buttons = 4
-        for i in range(num_log_header_buttons):
-            buttons_container_log_header.grid_columnconfigure(i, weight=1)
-
-        button_height_log = 28
-        button_font_style_log = ("Poppins", 11)
-
-        self.piu_button_dl_ref = ctk.CTkButton(
-            buttons_container_log_header, text="🎬 Piu...",
-            height=button_height_log, font=button_font_style_log,
-            command=lambda: webbrowser.open("https://www.youtube.com/@PiuKeTruyen"),
-            fg_color=special_action_button_color,
-            hover_color=special_action_hover_color
-        )
-        self.piu_button_dl_ref.grid(row=0, column=0, padx=(0,2), pady=2, sticky="ew")
-        Tooltip(self.piu_button_dl_ref, "Ủng hộ kênh Youtube 'Piu Kể Chuyện' nhé! ❤")
-
-        self.key_button_dl_ref = ctk.CTkButton(
-            buttons_container_log_header, text="🔑 Nhập Key",
-            height=button_height_log, font=button_font_style_log,
-            command=lambda: self.prompt_and_activate("🔑 Nhập Key Để Kích Hoạt :"),
-            fg_color=("#29b369", "#009999"),
-            hover_color=("#CC0000", "#CC0000"),
-            text_color=("white", "white"),
-            corner_radius=8
-        )
-        self.key_button_dl_ref.grid(row=0, column=1, padx=2, pady=2, sticky="ew")
-        Tooltip(self.key_button_dl_ref, "Nhập key để kích hoạt bản quyền")
-
-        self.update_button_dl_ref = ctk.CTkButton(
-            buttons_container_log_header, text="🔔 Cập nhật",
-            height=button_height_log, font=button_font_style_log,
-            command=self.manual_check_update
-        )
-        self.update_button_dl_ref.grid(row=0, column=2, padx=2, pady=2, sticky="ew")
-
-        self.clear_log_button_ref = ctk.CTkButton(
-            buttons_container_log_header, text="Clear Log",
-            height=button_height_log, font=button_font_style_log,
-            command=self.clear_download_log
-        )
-        self.clear_log_button_ref.grid(row=0, column=3, padx=(2,0), pady=2, sticky="ew")
-
-        # Sử dụng màu log textbox
-        self.download_log_textbox = ctk.CTkTextbox(log_section_frame, wrap="word", font=("Consolas", 12), state="disabled", fg_color=log_textbox_bg_color, border_width=1)
-        self.download_log_textbox.grid(row=1, column=0, sticky="nsew", padx=0, pady=(2,0))
-        try:
-            self.download_log_textbox.configure(state="normal")
-            self.download_log_textbox.insert("1.0", self.download_log_placeholder)
-            self.download_log_textbox.configure(state="disabled")
-        except Exception as e:
-            logging.error(f"Lỗi khi chèn placeholder vào download_log_textbox: {e}")
-
-        # Hàng 2: Progress Bar
-        self.download_progress_bar = ctk.CTkProgressBar(
-            right_panel_dl,
-            orientation="horizontal",
-            height=15,
-            progress_color=("#10B981", "#34D399"),
-            fg_color=("#D4D8DB", "#4A4D50")
-        )
-        self.download_progress_bar.grid(row=2, column=0, sticky="ew", padx=10, pady=(5, 10))
-        self.download_progress_bar.set(0)
-
-    def _create_download_tab(self, parent_frame):
-        """ Tạo các thành phần UI cho chế độ xem 'Tải xuống' với layout và màu sắc thích ứng theme. """
-        logging.debug("Đang tạo UI Chế độ xem Tải xuống (Theme-Aware)...")
-
-        # --- Định nghĩa các màu sắc thích ứng theme ---
-        colors = get_theme_colors()
-        panel_bg_color = colors["panel_bg"]
-        card_bg_color = colors["card_bg"]
-        log_textbox_bg_color = colors["log_textbox_bg"]
-        danger_button_color = colors["danger_button"]
-        danger_button_hover_color = colors["danger_button_hover"]
-        special_action_button_color = colors["special_action_button"]
-        special_action_hover_color = colors["special_action_hover"]
-        secondary_button_color = colors["secondary_button"]
-        
-        # --- Khung chính cho Chế độ xem Tải xuống ---
-        main_frame_dl = ctk.CTkFrame(parent_frame, fg_color="transparent")
-        main_frame_dl.pack(fill="both", expand=True)
-
-        main_frame_dl.grid_columnconfigure(0, weight=1, uniform="panelgroup")
-        main_frame_dl.grid_columnconfigure(1, weight=2, uniform="panelgroup")
-        main_frame_dl.grid_rowconfigure(0, weight=1)    # Đảm bảo hàng 0 co giãn theo chiều cao        
-
-        # --- KHUNG BÊN TRÁI - CONTAINER CỐ ĐỊNH CHIỀU RỘNG (Điều khiển Tải xuống) ---
-        # Sử dụng màu nền panel
-        left_panel_dl_container = ctk.CTkFrame(main_frame_dl, fg_color=panel_bg_color, corner_radius=12)
-        left_panel_dl_container.grid(row=0, column=0, padx=(0, 10), pady=0, sticky="nsew")
-        left_panel_dl_container.pack_propagate(False)
-
-        # --- KHUNG CUỘN CHO NỘI DUNG BÊN TRÁI (Tải xuống) ---
-        left_dl_scrollable_content = ctk.CTkScrollableFrame(
-            left_panel_dl_container,
-            fg_color="transparent" # Trong suốt để hiện màu của panel cha
-        )
-        left_dl_scrollable_content.pack(expand=True, fill="both", padx=0, pady=0)
-
-        # === CỤM NÚT HÀNH ĐỘNG CHÍNH (DOWNLOAD) ===
-        self._create_download_action_buttons_section(
-            left_dl_scrollable_content,
-            special_action_button_color,
-            special_action_hover_color,
-            danger_button_color,
-            danger_button_hover_color
-        )
-
-        # === INPUT CONFIG SECTION ===
-        self._create_download_input_config_section(left_dl_scrollable_content, card_bg_color)
-
-        # === OUTPUT CONFIG SECTION ===
-        self._create_download_output_config_section(left_dl_scrollable_content, card_bg_color)
-
-        # === FORMAT & QUALITY SECTION ===
-        self._create_download_format_quality_section(left_dl_scrollable_content, card_bg_color)
-
-        # === AUTO OPTIONS SECTIONS ===
-        self._create_download_auto_options_sections(left_dl_scrollable_content, card_bg_color)
-
-        # === EXTRAS & COOKIES SECTION ===
-        self._create_download_extras_cookies_sections(left_dl_scrollable_content, card_bg_color)
-
-        # === RIGHT PANEL (Queue, Log, Progress) ===
-        self._create_download_right_panel(main_frame_dl, panel_bg_color, card_bg_color, log_textbox_bg_color, special_action_button_color, special_action_hover_color)
-
-        logging.debug("Tạo UI Chế độ xem Tải xuống hoàn tất (đã cập nhật màu sắc tương thích theme và tăng tương phản).")
-
 
 
 #===========================================================================================================================================================================
@@ -11149,24 +10716,6 @@ class SubtitleApp(ctk.CTk):
 
 
 # Hàm hành động: Xóa nội dung trong ô log download
-    def clear_download_log(self):
-        """ Xóa nội dung trong ô log download """
-        log_widget = getattr(self, 'download_log_textbox', None)
-        if log_widget and log_widget.winfo_exists():
-            try:
-                log_widget.configure(state="normal")
-                log_widget.delete("1.0", "end")
-                # === THÊM ĐOẠN NÀY ===
-                placeholder_to_insert = getattr(self, 'download_log_placeholder', "[Log và trạng thái tải xuống sẽ hiển thị ở đây... Cám ơn mọi người đã sử dụng phần mềm Piu.]")
-                log_widget.insert("1.0", placeholder_to_insert)
-                # === KẾT THÚC ===
-                log_widget.configure(state="disabled")
-                logging.info("Người dùng đã xóa log download (và placeholder đã được đặt lại).")
-            except Exception as e:
-                logging.error(f"Lỗi khi xóa log download: {e}")
-
-
-
 # Hàm hành động: Xóa nội dung trong ô log Sub
     def clear_subtitle_textbox_content(self):
         """ Xóa toàn bộ nội dung trong ô subtitle_textbox và bật chế độ nhập liệu. """
@@ -11318,10 +10867,10 @@ class SubtitleApp(ctk.CTk):
         
         self.stop_event.clear()
         self.set_download_ui_state(downloading=True)
-        self.update_download_progress(0)
+        self.download_view_frame.update_download_progress(0)
         
-        self.log_download(f"🚀 Bắt đầu quá trình TẢI & TỰ ĐỘNG SUB (Nguồn: {source_of_urls})...")
-        self.log_download(f"   - Số link hiện có trong hàng chờ: {len(self.download_urls_list)}")
+        self.download_view_frame.log_download(f"🚀 Bắt đầu quá trình TẢI & TỰ ĐỘNG SUB (Nguồn: {source_of_urls})...")
+        self.download_view_frame.log_download(f"   - Số link hiện có trong hàng chờ: {len(self.download_urls_list)}")
 
         # --- Bước 5: Lưu cài đặt và ghi nhận yêu cầu tắt máy ---
         self.save_current_config()
@@ -13418,7 +12967,7 @@ class SubtitleApp(ctk.CTk):
             self.shutdown_scheduled = False
             # QUAN TRỌNG: Cũng nên reset cờ này vì yêu cầu tắt máy đã được xử lý (bằng cách hủy)
             self.shutdown_requested_by_task = False
-            self.log_download("   ✅ Đã hủy lệnh hẹn giờ tắt máy thành công.")            
+            self.download_view_frame.log_download("   ✅ Đã hủy lệnh hẹn giờ tắt máy thành công.")            
 
             # HỦY LỆNH HẸN GIỜ NỘI BỘ 
             if self._after_id_save_config_on_shutdown:
@@ -19632,9 +19181,8 @@ class SubtitleApp(ctk.CTk):
         if hasattr(self, '_set_dubbing_tab_ui_state'):
             self._set_dubbing_tab_ui_state()
         
-        # --- Tab Tải Xuống (Sửa lại để thay đổi cả text) ---
-        if hasattr(self, 'set_download_ui_state'):
-            self.set_download_ui_state(downloading=False)
+        if hasattr(self, 'download_view_frame') and self.download_view_frame:
+            self.download_view_frame.set_download_ui_state(downloading=False)
         
         # Logic tường minh để thay đổi text của các nút chính
         unactivated_text_main_download = "🔒 Kích hoạt (Tải)"
@@ -19651,13 +19199,13 @@ class SubtitleApp(ctk.CTk):
                 btn.configure(state=unactivated_state, text=text)
 
         # Khóa ô nhập liệu và chèn thông báo
-        if hasattr(self, 'download_url_text') and self.download_url_text.winfo_exists():
+        download_tab_textbox = getattr(self.download_view_frame, 'download_url_text', None)
+        if download_tab_textbox and download_tab_textbox.winfo_exists():
             try:
-                self.download_url_text.configure(state="normal")
-                self.download_url_text.delete("1.0", "end")
-                # Sử dụng biến self.download_url_placeholder mới tạo ở Bước 1
-                self.download_url_text.insert("1.0", self.download_url_placeholder)
-                self.download_url_text.configure(state="disabled")
+                download_tab_textbox.configure(state="normal")
+                download_tab_textbox.delete("1.0", "end")
+                download_tab_textbox.insert("1.0", self.download_url_placeholder)
+                download_tab_textbox.configure(state="disabled")
             except Exception: pass
 
         # --- Tab Upload YouTube ---
@@ -19711,8 +19259,8 @@ class SubtitleApp(ctk.CTk):
             self._set_subtitle_tab_ui_state(subbing_active=False)
 
         # --- Tab Tải Xuống (Sửa lại để khôi phục text) ---
-        if hasattr(self, 'set_download_ui_state'):
-            self.set_download_ui_state(downloading=False)
+        if hasattr(self, 'download_view_frame') and self.download_view_frame:
+            self.download_view_frame.set_download_ui_state(downloading=False)
         
         # Logic tường minh để khôi phục text của các nút chính
         download_buttons_to_restore = {
@@ -19725,11 +19273,14 @@ class SubtitleApp(ctk.CTk):
                 btn.configure(state=activated_state, text=text)
 
         # Khôi phục ô nhập liệu
-        if hasattr(self, 'download_url_text') and self.download_url_text.winfo_exists():
-            current_text = self.download_url_text.get("1.0", "end-1c")
-            # Chỉ xóa nếu nội dung là thông báo placeholder cho trạng thái chưa kích hoạt
-            if self.download_url_placeholder in current_text:
-                self.download_url_text.delete("1.0", "end")
+        download_tab_textbox = getattr(self.download_view_frame, 'download_url_text', None)
+        if download_tab_textbox and download_tab_textbox.winfo_exists():
+            try:
+                current_text = download_tab_textbox.get("1.0", "end-1c")
+                # Chỉ xóa nếu nội dung là thông báo placeholder
+                if self.download_url_placeholder in current_text:
+                    download_tab_textbox.delete("1.0", "end")
+            except Exception: pass
 
         # --- Tab Thuyết Minh (Logic gốc đã đúng) ---
         if hasattr(self, '_set_dubbing_tab_ui_state'):
@@ -19907,13 +19458,13 @@ class SubtitleApp(ctk.CTk):
                 logging.info(f"Đã lên lịch LƯU config (ID: {self._after_id_save_config_on_shutdown}) và THOÁT app (ID: {self._after_id_quit_on_shutdown}).")
 
                 # Bắt đầu đếm ngược 2 phút của HỆ THỐNG
-                self.log_download("   ⏳ Đang hẹn giờ tắt máy (3 phút)... Ứng dụng sẽ tự lưu và thoát trước đó.")
+                self.download_view_frame.log_download("   ⏳ Đang hẹn giờ tắt máy (3 phút)... Ứng dụng sẽ tự lưu và thoát trước đó.")
                 if shutdown_system(delay_minutes=2):
                     self.after(100, self.show_shutdown_cancel_popup)
                     self.shutdown_scheduled = True
                     self.update_status("⏰ Đã hẹn giờ tắt máy sau 3 phút...")
                 else:
-                    self.log_download("   ❌ Không thể hẹn giờ tắt máy.")
+                    self.download_view_frame.log_download("   ❌ Không thể hẹn giờ tắt máy.")
                     self.update_status("❌ Lỗi hẹn giờ tắt máy.")
                     self.shutdown_scheduled = False
         
@@ -21683,12 +21234,12 @@ class SubtitleApp(ctk.CTk):
 
         self.stop_event.clear()
         self.set_download_ui_state(downloading=True)
-        self.update_download_progress(0)
+        self.download_view_frame.update_download_progress(0)
 
-        self.log_download(f"🚀 Bắt đầu quá trình CHỈ TẢI (Nguồn: {source_of_urls})...")
-        self.log_download(f"   - Số link hiện có trong hàng chờ: {len(self.download_urls_list)}")
-        self.log_download(f"   - Chế độ: {config['mode']}")
-        self.log_download(f"   - Lưu tại: {config['folder']}")
+        self.download_view_frame.log_download(f"🚀 Bắt đầu quá trình CHỈ TẢI (Nguồn: {source_of_urls})...")
+        self.download_view_frame.log_download(f"   - Số link hiện có trong hàng chờ: {len(self.download_urls_list)}")
+        self.download_view_frame.log_download(f"   - Chế độ: {config['mode']}")
+        self.download_view_frame.log_download(f"   - Lưu tại: {config['folder']}")
 
         # --- Bước 5: Lưu cài đặt hiện tại và ghi nhận yêu cầu tắt máy ---
         self.save_current_config() 
@@ -21728,7 +21279,7 @@ class SubtitleApp(ctk.CTk):
         is_running = self.download_thread and self.download_thread.is_alive()
 
         if is_running:
-            self.log_download("\n🛑 Đang yêu cầu dừng quá trình tải...")
+            self.download_view_frame.log_download("\n🛑 Đang yêu cầu dừng quá trình tải...")
             self.stop_event.set()
 
             url_that_was_being_processed = self.current_download_url 
@@ -21755,178 +21306,56 @@ class SubtitleApp(ctk.CTk):
 
             proc = self.current_process
             if proc and proc.poll() is None:
-                self.log_download("   -> Đang cố gắng dừng tiến trình con (yt-dlp/ffmpeg)...")
+                self.download_view_frame.log_download("   -> Đang cố gắng dừng tiến trình con (yt-dlp/ffmpeg)...")
                 try:
                     proc.terminate()
                     proc.wait(timeout=1.5)
-                    self.log_download("   -> Tiến trình con đã dừng (terminate/wait).")
+                    self.download_view_frame.log_download("   -> Tiến trình con đã dừng (terminate/wait).")
                 except subprocess.TimeoutExpired:
-                    self.log_download("   -> Tiến trình con không phản hồi, buộc dừng (kill)...")
+                    self.download_view_frame.log_download("   -> Tiến trình con không phản hồi, buộc dừng (kill)...")
                     try:
                         proc.kill()
-                        self.log_download("   -> Đã buộc dừng (kill) tiến trình con.")
+                        self.download_view_frame.log_download("   -> Đã buộc dừng (kill) tiến trình con.")
                     except Exception as kill_err:
-                        self.log_download(f"   -> Lỗi khi buộc dừng (kill): {kill_err}")
+                        self.download_view_frame.log_download(f"   -> Lỗi khi buộc dừng (kill): {kill_err}")
                 except Exception as e:
-                    self.log_download(f"   -> Lỗi khi dừng tiến trình con: {e}")
+                    self.download_view_frame.log_download(f"   -> Lỗi khi dừng tiến trình con: {e}")
                     if proc.poll() is None:
                         try:
                             proc.kill()
-                            self.log_download("   -> Đã buộc dừng (kill) sau lỗi.")
+                            self.download_view_frame.log_download("   -> Đã buộc dừng (kill) sau lỗi.")
                         except Exception as kill_err_B:
-                            self.log_download(f"   -> Lỗi khi buộc dừng (kill) lần 2: {kill_err_B}")
+                            self.download_view_frame.log_download(f"   -> Lỗi khi buộc dừng (kill) lần 2: {kill_err_B}")
             else:
-                self.log_download("   -> Không tìm thấy tiến trình con đang chạy để dừng trực tiếp.")
+                self.download_view_frame.log_download("   -> Không tìm thấy tiến trình con đang chạy để dừng trực tiếp.")
             self.current_process = None
 
             self.after(0, lambda: self.set_download_ui_state(downloading=False))
             self.after(10, self.update_download_queue_display) 
-            self.after(20, lambda: self.update_download_progress(0))
+            self.after(20, lambda: self.download_view_frame.update_download_progress(0))
         else:
-            self.log_download("\nℹ️ Không có tiến trình tải nào đang chạy để dừng.")
+            self.download_view_frame.log_download("\nℹ️ Không có tiến trình tải nào đang chạy để dừng.")
             self.set_download_ui_state(downloading=False)
             self.update_download_queue_display()
 
 
-# Hàm hành động: Chọn thư mục lưu file tải về
-    def select_download_path(self):
-        """ Mở dialog chọn thư mục lưu file tải về """
-        initial_dir = self.download_path_var.get() or get_default_downloads_folder()
-        path = filedialog.askdirectory(initialdir=initial_dir, parent=self)
-        if path:
-            self.download_path_var.set(path)
-            logging.info(f"Đã chọn đường dẫn tải về: {path}")
-        else:
-            logging.info("Đã hủy chọn đường dẫn tải về.")
-
-
-# Hàm hành động: Mở thư mục tải về hiện tại
-    def open_download_folder(self):
-        """ Mở thư mục tải về hiện tại """
-        current_path = self.download_path_var.get()
-        if current_path and os.path.isdir(current_path):
-            logging.info(f"Đang mở thư mục tải về: {current_path}")
-            open_file_with_default_app(current_path)
-        else:
-            messagebox.showwarning("Lỗi", "Đường dẫn tải về không hợp lệ hoặc chưa chọn.", parent=self)
-            logging.warning(f"Đường dẫn tải về không hợp lệ hoặc bị thiếu: {current_path}")
-
-
 # Hàm tiện ích UI Download: Bật/tắt nút chọn file âm thanh dựa vào checkbox
-    def toggle_download_sound_button(self):
-        """Bật/tắt nút âm thanh khi tải, dựa trên kích hoạt + trạng thái tải + checkbox âm thanh."""
-        btn = getattr(self, 'download_sound_button', None)
-        if not (btn and btn.winfo_exists()):
-            return
-
-        try:
-            # 1) App đã kích hoạt?
-            try:
-                is_active = self._is_app_fully_activated()
-            except Exception:
-                is_active = False
-
-            # 2) Đang tải?
-            is_downloading = bool(getattr(self, 'is_downloading', False))
-
-            # 3) Checkbox "phát âm thanh khi tải xong" đang bật?
-            sound_enabled = bool(self.download_sound_var.get()) if (
-                hasattr(self, 'download_sound_var') and self.download_sound_var
-            ) else False
-
-            # Quyết định trạng thái nút
-            can_enable = is_active and (not is_downloading) and sound_enabled
-            target_state = "normal" if can_enable else "disabled"
-
-            # Chỉ cập nhật khi cần
-            if str(btn.cget("state")) != target_state:
-                btn.configure(state=target_state)
-
-        except Exception as e:
-            logging.error(f"Lỗi bật/tắt nút âm thanh download: {e}", exc_info=False)
-
-
-# Hàm hành động: Chọn file âm thanh thông báo khi tải xong
-    def select_download_sound(self):
-        """ Mở dialog chọn file âm thanh """
-        initial_dir = os.path.dirname(self.download_sound_path_var.get()) if self.download_sound_path_var.get() else "."
-        f = filedialog.askopenfilename(
-            initialdir=initial_dir,
-            filetypes=[("Audio files", "*.wav *.mp3")],
-            title="Chọn file âm thanh thông báo",
-            parent=self
-        )
-        if f and os.path.isfile(f):
-             self.download_sound_path_var.set(f)
-             logging.info(f"Đã chọn file âm thanh download: {f}")
-             self.save_current_config()
-        elif f:
-             messagebox.showwarning("File không tồn tại", f"Đường dẫn file đã chọn không hợp lệ:\n{f}", parent=self)
-
 
 # Hàm tiện ích UI Download: Hiện/Ẩn ô nhập tên file khi chọn đổi tên hàng loạt
-    def toggle_download_rename_entry(self):
-            """ Hiện/Ẩn ô nhập tên file đổi hàng loạt """
-            frame_exists = hasattr(self, 'download_rename_entry_frame') and self.download_rename_entry_frame and self.download_rename_entry_frame.winfo_exists()
-            entry_exists = hasattr(self, 'download_rename_entry') and self.download_rename_entry and self.download_rename_entry.winfo_exists()
-            checkbox_exists = hasattr(self, 'download_rename_check') and self.download_rename_check and self.download_rename_check.winfo_exists()
-
-            if not frame_exists or not entry_exists or not checkbox_exists:
-                return
-            try:
-                if self.download_rename_var.get():
-                    if not self.download_rename_entry_frame.winfo_ismapped():
-                        self.download_rename_entry_frame.pack(fill="x", padx=10, pady=(0, 10), after=self.download_rename_check)
-                    self.download_rename_entry.configure(state="normal")
-                else:
-                    self.download_rename_entry_frame.pack_forget()
-                    self.download_rename_entry.configure(state="disabled")
-            except Exception as e:
-                 logging.error(f"Lỗi bật/tắt ô nhập đổi tên download: {e}", exc_info=True)
-
-# HÀM MỚI: Chọn file cookies
-    def _select_cookies_file(self):
-        """Mở dialog để người dùng chọn file cookies.txt."""
-        initial_dir = os.path.dirname(self.download_cookies_path_var.get()) if self.download_cookies_path_var.get() else get_default_downloads_folder()
-        filepath = filedialog.askopenfilename(
-            title="Chọn file cookies.txt",
-            initialdir=initial_dir,
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
-            parent=self
-        )
-        if filepath:
-            self.download_cookies_path_var.set(filepath)
-            self._update_cookies_label()
-            self.save_current_config() # Lưu lại lựa chọn
 
     # HÀM MỚI: Cập nhật trạng thái của nút chọn file cookies
     def _toggle_cookies_button_state(self):
-        """Bật/tắt nút chọn file cookies dựa vào checkbox."""
-        if hasattr(self, 'download_cookies_button') and self.download_cookies_button.winfo_exists():
-            new_state = "normal" if self.download_use_cookies_var.get() else "disabled"
-            self.download_cookies_button.configure(state=new_state)
-        self._update_cookies_label()
+        """Bật/tắt nút chọn file cookies (ĐÃ REFACTOR)"""
+        if hasattr(self, 'download_view_frame'):
+            btn = getattr(self.download_view_frame, 'download_cookies_button', None)
+            if btn and btn.winfo_exists():
+                new_state = "normal" if self.download_use_cookies_var.get() else "disabled"
+                btn.configure(state=new_state)
+            # Gọi hàm update label từ DownloadTab
+            self.download_view_frame._update_cookies_label()
 
 
-    # HÀM MỚI: Cập nhật label hiển thị đường dẫn file cookies
-    def _update_cookies_label(self):
-        """Cập nhật label hiển thị đường dẫn và trạng thái của file cookies."""
-        if hasattr(self, 'download_cookies_path_label') and self.download_cookies_path_label.winfo_exists():
-            SUCCESS_COLOR = ("#0B8457", "lightgreen")
-            ERROR_COLOR = ("#B71C1C", "#FF8A80")
-            WARNING_COLOR = ("#E65100", "#FFB74D")
-            DEFAULT_COLOR = ("gray30", "gray70")
-
-            path = self.download_cookies_path_var.get()
-            if self.download_use_cookies_var.get():
-                if path and os.path.exists(path):
-                    self.download_cookies_path_label.configure(text=f"--Đã chọn: {os.path.basename(path)}", text_color=SUCCESS_COLOR)
-                elif path:
-                    self.download_cookies_path_label.configure(text=f"Lỗi: File '{os.path.basename(path)}' không tồn tại!", text_color=ERROR_COLOR)
-                else:
-                    self.download_cookies_path_label.configure(text="(Vui lòng chọn file cookies.txt)", text_color=WARNING_COLOR)
-            else:
-                self.download_cookies_path_label.configure(text="(Tính năng cookies đang tắt)", text_color=DEFAULT_COLOR)
+    # HÀM MỚI: Cập nhật label hiển thị đường dẫn file cookies - ĐÃ DI CHUYỂN SANG DownloadTab
 
 
 #-------------------
@@ -21954,7 +21383,7 @@ class SubtitleApp(ctk.CTk):
             base_folder_str = config.get("folder", ".") # Lấy đường dẫn từ config
             if not base_folder_str: # Xử lý nếu đường dẫn trống
                  logging.error(f"[{thread_name}] Đường dẫn thư mục tải về bị trống!")
-                 self.after(0, lambda: self.log_download(f"   ❌ Lỗi: Đường dẫn lưu trống!"))
+                 self.after(0, lambda: self.download_view_frame.log_download(f"   ❌ Lỗi: Đường dẫn lưu trống!"))
                  return (False, None)
             base_folder = Path(base_folder_str)
             try:
@@ -21962,7 +21391,7 @@ class SubtitleApp(ctk.CTk):
                 logging.debug(f"[{thread_name}] Đã đảm bảo thư mục tồn tại: {base_folder}")
             except OSError as e:
                 logging.error(f"[{thread_name}] Không thể tạo thư mục '{base_folder}': {e}")
-                self.after(0, lambda err=e, p=str(base_folder): self.log_download(f"   ❌ Lỗi tạo thư mục '{p}': {err}"))
+                self.after(0, lambda err=e, p=str(base_folder): self.download_view_frame.log_download(f"   ❌ Lỗi tạo thư mục '{p}': {err}"))
                 return (False, None) # Không thể tiếp tục nếu không có thư mục
 
             # --- 2. Xây dựng Lệnh cmd cho yt-dlp ---
@@ -21976,7 +21405,7 @@ class SubtitleApp(ctk.CTk):
             ffmpeg_location = find_ffmpeg()
             if not ffmpeg_location:
                 logging.error(f"[{thread_name}] Không tìm thấy ffmpeg.")
-                self.after(0, lambda: self.log_download(f"   ❌ Lỗi: Không tìm thấy ffmpeg!"))
+                self.after(0, lambda: self.download_view_frame.log_download(f"   ❌ Lỗi: Không tìm thấy ffmpeg!"))
                 self.after(0, lambda: self.update_status(f"❌ Lỗi tải: Thiếu ffmpeg."))
                 return (False, None)
 
@@ -22099,7 +21528,7 @@ class SubtitleApp(ctk.CTk):
             logging.debug(f"[{thread_name}] Lệnh yt-dlp hoàn chỉnh sẽ chạy: {' '.join(cmd)}")
 
             # Reset progress bar trước khi bắt đầu
-            self.after(0, lambda: self.update_download_progress(0))
+            self.after(0, lambda: self.download_view_frame.update_download_progress(0))
 
             # --- 3. Thực thi tiến trình yt-dlp và đọc output ---
             startupinfo = None; creationflags = 0
@@ -22140,7 +21569,7 @@ class SubtitleApp(ctk.CTk):
                  if not clean_line: continue # Bỏ qua dòng trống
                  output_lines.append(clean_line) # Lưu lại dòng log để debug nếu cần
                  # Gửi lên UI Log (có thể làm chậm nếu quá nhiều log verbose)
-                 self.after(0, lambda line=clean_line: self.log_download(f"      {line}"))
+                 self.after(0, lambda line=clean_line: self.download_view_frame.log_download(f"      {line}"))
 
                  # Phân tích dòng log để tìm đường dẫn file cuối hoặc trạng thái
                  dest_match = destination_regex.search(clean_line)
@@ -22156,7 +21585,7 @@ class SubtitleApp(ctk.CTk):
                  # Phát hiện giai đoạn xử lý sau tải (ffmpeg, merge,...)
                  if not is_processing_step and any(tag in clean_line for tag in ["[ExtractAudio]", "[Merger]", "[ffmpeg]"]):
                       is_processing_step = True
-                      self.after(0, lambda: self.update_download_progress(100)) # Xem như download 100%
+                      self.after(0, lambda: self.download_view_frame.update_download_progress(100)) # Xem như download 100%
                       self.after(0, lambda: self.update_status("⏳ Đang xử lý (ghép/chuyển đổi)..."))
                       logging.debug(f"[{thread_name}] Bắt đầu giai đoạn xử lý sau tải...")
                       continue # Không cần parse % nữa
@@ -22170,7 +21599,7 @@ class SubtitleApp(ctk.CTk):
                              percent = float(percent_str)
                              if abs(percent - last_percent) >= 0.5 or percent >= 99.9:
                                  last_percent = percent
-                                 self.after(0, lambda p=percent: self.update_download_progress(p))
+                                 self.after(0, lambda p=percent: self.download_view_frame.update_download_progress(p))
                          except ValueError:
                              pass # Bỏ qua nếu lỗi parse số
 
@@ -22205,7 +21634,7 @@ class SubtitleApp(ctk.CTk):
 
             # --- 6. Xử lý kết quả cuối cùng (PHIÊN BẢN HOÀN CHỈNH) ---
             if self.stop_event.is_set() or return_code == -100:
-                self.after(0, lambda: self.log_download(f"   ⚠️ Bị dừng."))
+                self.after(0, lambda: self.download_view_frame.log_download(f"   ⚠️ Bị dừng."))
                 process_result = False
             
             # Ưu tiên kiểm tra sự tồn tại của file output làm điều kiện thành công chính
@@ -22221,12 +21650,12 @@ class SubtitleApp(ctk.CTk):
             if final_output_path_check:
                 if return_code == 0:
                     logging.info(f"[{thread_name}] THÀNH CÔNG: yt-dlp thoát với mã 0 và file output hợp lệ: {final_output_path_check}")
-                    self.after(0, lambda: self.log_download(f"   ✔️ Hoàn thành (Mã 0)."))
+                    self.after(0, lambda: self.download_view_frame.log_download(f"   ✔️ Hoàn thành (Mã 0)."))
                 else:
                     logging.warning(f"[{thread_name}] THÀNH CÔNG (FALLBACK): yt-dlp thoát với mã lỗi {return_code} nhưng đã tạo file thành công: {final_output_path_check}")
-                    self.after(0, lambda: self.log_download(f"   ✔️ Hoàn thành (với fallback của yt-dlp)."))
+                    self.after(0, lambda: self.download_view_frame.log_download(f"   ✔️ Hoàn thành (với fallback của yt-dlp)."))
                 
-                self.after(10, lambda: self.update_download_progress(100))
+                self.after(10, lambda: self.download_view_frame.update_download_progress(100))
                 process_result = True
                 output_filepath = final_output_path_check
             
@@ -22250,16 +21679,16 @@ class SubtitleApp(ctk.CTk):
                 error_log_msg_ui = f"   ❌ Lỗi tải {'Video' if is_video else 'MP3'} (mã {return_code})"
                 if specific_error_msg:
                     error_log_msg_ui += f": {specific_error_msg}"
-                self.after(0, lambda msg=error_log_msg_ui: self.log_download(msg))
+                self.after(0, lambda msg=error_log_msg_ui: self.download_view_frame.log_download(msg))
 
         except FileNotFoundError:
              logging.error(f"Lỗi FileNotFoundError: Không tìm thấy file thực thi '{YTDLP_PATH}'.")
-             self.after(0, lambda: self.log_download(f"   ❌ Lỗi: Không tìm thấy '{YTDLP_PATH}'.")); process_result = False
+             self.after(0, lambda: self.download_view_frame.log_download(f"   ❌ Lỗi: Không tìm thấy '{YTDLP_PATH}'.")); process_result = False
              self.after(0, lambda: self.update_status(f"❌ Lỗi tải: Không tìm thấy '{YTDLP_PATH}'."))
         except Exception as e:
              import traceback; error_details = traceback.format_exc()
              logging.error(f"[{thread_name}] Lỗi không mong đợi trong _execute_ytdlp: {e}\n{error_details}")
-             self.after(0, lambda err=e: self.log_download(f"   ❌ Lỗi không xác định: {err}")); process_result = False
+             self.after(0, lambda err=e: self.download_view_frame.log_download(f"   ❌ Lỗi không xác định: {err}")); process_result = False
         finally:
             # --- Khối Finally (Đảm bảo dọn dẹp và kết thúc) ---
             # Dọn dẹp file tạm nếu tải thất bại và không phải do người dùng dừng
@@ -22465,9 +21894,9 @@ class SubtitleApp(ctk.CTk):
                 self.after(0, self.update_download_queue_display) # Cập nhật UI ngay khi chọn link
                 self.after(0, lambda url=current_url_to_process, p=processed_count_this_run, retries=current_retry_for_url, total_q=len(self.download_urls_list): \
                     self.update_status(f"⏳ Đang tải link {p} (Thử {retries+1}, còn {total_q-1} chờ): {url[:45]}..."))
-                self.after(0, lambda: self.update_download_progress(0))
+                self.after(0, lambda: self.download_view_frame.update_download_progress(0))
                 self.after(0, lambda url_log=current_url_to_process, retries=current_retry_for_url: \
-                    self.log_download(f"\n🔗--- Đang xử lý link (Thử lần {retries+1}): {url_log} ---"))
+                    self.download_view_frame.log_download(f"\n🔗--- Đang xử lý link (Thử lần {retries+1}): {url_log} ---"))
 
                 loop_start_time = time.time()
                 link_overall_success = True
@@ -22479,7 +21908,7 @@ class SubtitleApp(ctk.CTk):
                     at_least_one_download_attempted = True
                     if self.stop_event.is_set(): link_overall_success = False
                     else:
-                        self.after(0, lambda: self.log_download("   🎬 Đang tải Video..."))
+                        self.after(0, lambda: self.download_view_frame.log_download("   🎬 Đang tải Video..."))
                         video_success, video_filepath_returned = self._execute_ytdlp(current_url_to_process, config_from_start, is_video=True, index=processed_count_this_run, task_object_ref=task_object)
                         if not video_success: link_overall_success = False
                         elif video_filepath_returned: video_filepath_result = video_filepath_returned
@@ -22489,18 +21918,18 @@ class SubtitleApp(ctk.CTk):
                 if should_download_mp3 and not self.stop_event.is_set() and \
                    (config_from_start.get("mode", "video") == "mp3" or link_overall_success): # Chỉ tải MP3 nếu mode là mp3 hoặc video (nếu có) đã thành công
                     at_least_one_download_attempted = True
-                    if config_from_start.get("mode", "video") == "both": self.after(0, lambda: self.update_download_progress(0))
-                    self.after(0, lambda: self.log_download("   🎵 Đang tải MP3..."))
+                    if config_from_start.get("mode", "video") == "both": self.after(0, lambda: self.download_view_frame.update_download_progress(0))
+                    self.after(0, lambda: self.download_view_frame.log_download("   🎵 Đang tải MP3..."))
                     mp3_success, _ = self._execute_ytdlp(current_url_to_process, config_from_start, is_video=False, index=processed_count_this_run, task_object_ref=task_object)
                     if not mp3_success: link_overall_success = False
                 elif should_download_mp3 and not link_overall_success and config_from_start.get("mode", "video") == "both":
                      logging.info(f"[{thread_name}] RUN_DOWNLOAD: Chế độ 'both', video lỗi nên bỏ qua tải MP3 cho: {current_url_to_process}")
-                     self.after(0, lambda url_log=current_url_to_process: self.log_download(f"   ⚠️ Video lỗi, bỏ qua MP3 cho: {url_log[:80]}..."))
+                     self.after(0, lambda url_log=current_url_to_process: self.download_view_frame.log_download(f"   ⚠️ Video lỗi, bỏ qua MP3 cho: {url_log[:80]}..."))
 
                 if not at_least_one_download_attempted and not self.stop_event.is_set():
                     link_overall_success = False # Coi như lỗi nếu không có gì được thử tải
                     logging.warning(f"[{thread_name}] RUN_DOWNLOAD: Không có tác vụ tải nào cho URL: {current_url_to_process} với chế độ {config_from_start.get('mode', 'video')}")
-                    self.after(0, lambda url_log=current_url_to_process: self.log_download(f"   ⚠️ Không tải gì cho: {url_log[:80]}... (Chế độ: {config_from_start.get('mode', 'video')})"))
+                    self.after(0, lambda url_log=current_url_to_process: self.download_view_frame.log_download(f"   ⚠️ Không tải gì cho: {url_log[:80]}... (Chế độ: {config_from_start.get('mode', 'video')})"))
                     if current_url_to_process not in error_links_encountered_this_run: 
                         error_links_encountered_this_run.append(current_url_to_process)
 
@@ -22511,7 +21940,7 @@ class SubtitleApp(ctk.CTk):
                     
                     if link_overall_success:
                         success_count_this_run += 1
-                        self.after(0, lambda url_log=current_url_to_process, t=duration: self.log_download(f"   ✅ Hoàn thành Link: {url_log[:80]}... (Thời gian: {t:.2f}s)"))
+                        self.after(0, lambda url_log=current_url_to_process, t=duration: self.download_view_frame.log_download(f"   ✅ Hoàn thành Link: {url_log[:80]}... (Thời gian: {t:.2f}s)"))
                         if video_filepath_result and os.path.exists(video_filepath_result):
                             if video_filepath_result not in successfully_downloaded_video_files_this_run:
                                 successfully_downloaded_video_files_this_run.append(video_filepath_result)
@@ -22535,7 +21964,7 @@ class SubtitleApp(ctk.CTk):
                             logging.error(f"[{thread_name}] RUN_DOWNLOAD: Lỗi khi xóa URL thành công '{current_url_to_process[:50]}...': {e_remove}")
                     
                     else: # link_overall_success is False (và không phải do stop_event)
-                        self.after(0, lambda url_log=current_url_to_process, t=duration: self.log_download(f"   ⚠️ Hoàn thành Link với lỗi: {url_log[:80]}... (Thời gian: {t:.2f}s)"))
+                        self.after(0, lambda url_log=current_url_to_process, t=duration: self.download_view_frame.log_download(f"   ⚠️ Hoàn thành Link với lỗi: {url_log[:80]}... (Thời gian: {t:.2f}s)"))
                         if current_url_to_process not in error_links_encountered_this_run: 
                              error_links_encountered_this_run.append(current_url_to_process)
 
@@ -22545,7 +21974,7 @@ class SubtitleApp(ctk.CTk):
 
                         if current_retry_for_url_after_attempt >= MAX_RETRIES_PER_LINK:
                             logging.warning(f"[{thread_name}] RUN_DOWNLOAD: URL '{current_url_to_process[:50]}...' đã lỗi {current_retry_for_url_after_attempt} lần. Sẽ không thử lại và giữ nguyên vị trí (sẽ bị bỏ qua ở vòng lặp sau).")
-                            self.after(0, lambda url_log=current_url_to_process: self.log_download(f"   🚫 Link {url_log[:50]}... đã lỗi quá nhiều lần, sẽ không thử lại."))
+                            self.after(0, lambda url_log=current_url_to_process: self.download_view_frame.log_download(f"   🚫 Link {url_log[:50]}... đã lỗi quá nhiều lần, sẽ không thử lại."))
 
                         else:
                             if self.download_urls_list and self.download_urls_list[0] == current_url_to_process:
@@ -22560,7 +21989,7 @@ class SubtitleApp(ctk.CTk):
                                     logging.warning(f"[{thread_name}] RUN_DOWNLOAD: URL lỗi '{current_url_to_process[:50]}...' là mục duy nhất (thử {current_retry_for_url_after_attempt}), không di chuyển.")
                         
                         if config_from_start.get("stop_on_error", False):
-                            self.after(0, lambda: self.log_download("\n✋ Đã bật 'Dừng khi lỗi'. Dừng xử lý!"))
+                            self.after(0, lambda: self.download_view_frame.log_download("\n✋ Đã bật 'Dừng khi lỗi'. Dừng xử lý!"))
                             self.stop_event.set() 
                 
                 if self.stop_event.is_set():
@@ -22649,10 +22078,10 @@ class SubtitleApp(ctk.CTk):
                          final_message += "\n(Không yêu cầu tự động sub).\n"
 
                     if config_from_start.get("do_sound", False) and config_from_start.get("sound_file") and PLAYSOUND_AVAILABLE:
-                       self.after(100, lambda: self.log_download(" 🔊 Đang phát âm thanh hoàn tất tải..."))
+                       self.after(100, lambda: self.download_view_frame.log_download(" 🔊 Đang phát âm thanh hoàn tất tải..."))
                        play_sound_async(config_from_start["sound_file"]) # Đã sửa ở bước trước
 
-                self.after(150, lambda msg=final_message: self.log_download(msg))
+                self.after(150, lambda msg=final_message: self.download_view_frame.log_download(msg))
 
                 final_status_text = "✅ Tải hoàn tất!" 
                 if self.stop_event.is_set(): 
@@ -22668,7 +22097,7 @@ class SubtitleApp(ctk.CTk):
                     self.after(250, lambda: self.set_download_ui_state(downloading=False))
 
                 if not self.stop_event.is_set() and not should_auto_sub:
-                     self.after(250, lambda: self.update_download_progress(0))
+                     self.after(250, lambda: self.download_view_frame.update_download_progress(0))
 
                 # Lấy trạng thái của checkbox Tự động Upload
                 is_auto_upload_request = self.auto_upload_after_download_var.get()
@@ -22809,106 +22238,8 @@ class SubtitleApp(ctk.CTk):
         logging.info("Đã lên lịch reset UI của tab Download sau khi kích hoạt auto_sub_all.")
 
 
-# --- Các hàm Helper cập nhật UI Download ---
-# Hàm hỗ trợ UI Download: Ghi log vào ô Textbox (thread-safe)
-    def log_download(self, message):
-        """ Ghi log vào ô Download Log (thread-safe) """
-        log_widget = getattr(self, 'download_log_textbox', None)
-        if log_widget and log_widget.winfo_exists():
-            if not message.endswith('\n'):
-                 message += '\n'
-
-            def _insert_task_with_state_change():
-                try:
-                    log_widget.configure(state="normal")
-
-                    # Lấy nội dung hiện tại, không strip() ngay để so sánh chính xác với placeholder
-                    current_content_full = log_widget.get("1.0", "end-1c")
-                    placeholder_to_check = getattr(self, 'download_log_placeholder', "") # Không strip placeholder gốc
-
-                    # Chỉ xóa nếu nội dung hiện tại CHÍNH XÁC là placeholder
-                    if placeholder_to_check and current_content_full == placeholder_to_check:
-                        log_widget.delete("1.0", "end")
-
-                    log_widget.insert("end", message) # Chèn log mới
-                    log_widget.see("end")
-                    log_widget.configure(state="disabled")
-                except Exception as e:
-                    logging.error(f"Lỗi trong quá trình chèn/thay đổi trạng thái log: {e}")
-
-            self.after(0, _insert_task_with_state_change)
-        else:
-            logging.info(f"[Dự phòng Log Download] {message.strip()}")
 
 
-    # Hàm hỗ trợ UI Download: Cập nhật thanh tiến trình (thread-safe)
-    def update_download_progress(self, value):
-         """ Cập nhật progress bar download (thread-safe) - Giá trị từ 0 đến 100 """
-         logging.debug(f"DEBUG CẬP NHẬT PROGRESS: Nhận giá trị = {value}")
-         if hasattr(self, 'download_progress_bar') and self.download_progress_bar and self.download_progress_bar.winfo_exists():
-              def _update():
-                  try:
-                      value_float = float(value) / 100.0
-                      value_clamped = max(0.0, min(1.0, value_float))
-                      self.download_progress_bar.set(value_clamped)
-                  except Exception as e:
-                      logging.warning(f"Lỗi cập nhật progress bar download: {e}")
-              self.after(0, _update)
-
-
-    # Hàm hỗ trợ UI Download: Cập nhật thanh tiến trình (thread-safe)
-    def set_download_progress_indeterminate(self, start=True):
-         """ Đặt progress bar download ở chế độ indeterminate (mô phỏng) """
-         if hasattr(self, 'download_progress_bar') and self.download_progress_bar and self.download_progress_bar.winfo_exists():
-             if start:
-                 logging.debug("Mô phỏng progress indeterminate (đặt về 0)")
-             else:
-                 logging.debug("Đặt progress bar trở lại chế độ determinate")
-
-
- # Hàm hỗ trợ UI Download: Bật/tắt các nút và thành phần điều khiển
-    def set_download_ui_state(self, downloading):
-        """
-        Bật/tắt các nút và thành phần điều khiển của tab Download.
-        PHIÊN BẢN HOÀN CHỈNH CUỐI CÙNG.
-        """
-        logging.info(f"[UI Download] Đặt trạng thái, downloading={downloading}")
-        self.is_downloading = downloading
-
-        # Kiểm tra bản quyền
-        is_app_active = self._is_app_fully_activated()
-
-        # Xác định trạng thái mục tiêu cho các control
-        target_state_for_normal_ops = "normal" if is_app_active and not downloading else "disabled"
-        stop_button_target_state = "normal" if is_app_active and downloading else "disabled"
-
-        # Cập nhật các nút và menu chính
-        widgets_to_configure = [
-            self.download_start_button, self.all_button, self.add_sheet_button,
-            self.download_playlist_check, self.download_video_quality_menu,
-            self.download_audio_quality_menu, self.download_sound_check,
-            self.download_shutdown_check, self.download_stop_on_error_check,
-            self.download_rename_check
-        ]
-        for widget in widgets_to_configure:
-            if widget and widget.winfo_exists():
-                try:
-                    widget.configure(state=target_state_for_normal_ops)
-                except Exception as e:
-                    logging.warning(f"Lỗi khi đặt trạng thái cho widget {type(widget).__name__}: {e}")
-
-        # Cập nhật nút Dừng riêng biệt
-        if hasattr(self, 'download_stop_button') and self.download_stop_button.winfo_exists():
-            self.download_stop_button.configure(state=stop_button_target_state)
-
-        # Cập nhật CTkTextbox (ô nhập link) riêng biệt
-        # Đây là cách đúng để thay đổi trạng thái của CTkTextbox
-        if hasattr(self, 'download_url_text') and self.download_url_text.winfo_exists():
-            self.download_url_text.configure(state=target_state_for_normal_ops)
-
-        # Cập nhật các control phụ thuộc
-        self.toggle_download_sound_button()
-        self.toggle_download_rename_entry()
 
 
 # Hàm hỗ trợ UI Download: Cập nhật hiển thị hàng chờ tải xuống
@@ -23152,7 +22483,7 @@ class SubtitleApp(ctk.CTk):
                     logging.info(f"[{current_thread_name}] Người dùng hủy nhập Sheet ID.")
                     if callback: self.after(0, lambda: callback(False, None, "Người dùng hủy nhập Sheet ID.")) # Gọi callback trên luồng chính
                     else: messagebox.showwarning("Thiếu thông tin", "Bạn cần nhập Google Sheet ID để tiếp tục.", parent=self)
-                    self._reenable_fetch_button() # Bật lại nút nếu nó bị disable
+                    if hasattr(self, 'download_view_frame'): self.download_view_frame._reenable_fetch_button() # Bật lại nút nếu nó bị disable
                     return
             
             default_range_example = "Sheet1!B2:B" # Đưa ra ngoài để dùng chung
@@ -23172,16 +22503,17 @@ class SubtitleApp(ctk.CTk):
                         logging.warning(f"[{current_thread_name}] Định dạng Phạm vi Sheet không hợp lệ: {entered_range}")
                         if callback: self.after(0, lambda: callback(False, None, f"Định dạng Phạm vi Sheet không hợp lệ: {entered_range}"))
                         else: messagebox.showerror("Sai định dạng", f"Phạm vi '{entered_range}' không hợp lệ.\nVí dụ đúng: {default_range_example}", parent=self)
-                        self._reenable_fetch_button()
+                        if hasattr(self, 'download_view_frame'): self.download_view_frame._reenable_fetch_button()
                         return
-                    sheet_range = entered_range.strip()
-                    self.sheet_range_var.set(sheet_range)
-                    self.cfg['sheet_range'] = sheet_range # Cập nhật config trực tiếp
+                    else:
+                        sheet_range = entered_range.strip()
+                        self.sheet_range_var.set(sheet_range)
+                        self.cfg['sheet_range'] = sheet_range # Cập nhật config trực tiếp
                 else:
                     logging.info(f"[{current_thread_name}] Người dùng hủy nhập Phạm vi Sheet.")
                     if callback: self.after(0, lambda: callback(False, None, "Người dùng hủy nhập Phạm vi Sheet."))
                     else: messagebox.showwarning("Thiếu thông tin", f"Bạn cần nhập Phạm vi Sheet (ví dụ: {default_range_example}) để tiếp tục.", parent=self)
-                    self._reenable_fetch_button()
+                    if hasattr(self, 'download_view_frame'): self.download_view_frame._reenable_fetch_button()
                     return
         
         # --- Kiểm tra lại ID và Range trước khi chạy thread (quan trọng cho cả auto và manual) ---
@@ -23191,7 +22523,7 @@ class SubtitleApp(ctk.CTk):
             if callback: self.after(0, lambda: callback(False, None, "Thiếu Sheet ID hoặc Range trong cấu hình."))
             if not auto_triggered: # Chỉ hiện lỗi cho người dùng nếu họ nhấn nút
                 messagebox.showerror("Thiếu Thông Tin", "Sheet ID hoặc Phạm vi không được để trống trong cấu hình hoặc ô nhập.", parent=self)
-                self._reenable_fetch_button() 
+                if hasattr(self, 'download_view_frame'): self.download_view_frame._reenable_fetch_button()
             return
 
         # Lưu cấu hình nếu người dùng đã nhập (không phải auto) và có thay đổi
@@ -23334,7 +22666,7 @@ class SubtitleApp(ctk.CTk):
                     self.after(0, self.update_status, f"❌ Lỗi lấy link Sheet: {error_msg_for_callback[:100]}...") # Giới hạn độ dài msg
                     self.after(0, lambda msg=error_msg_for_callback: messagebox.showerror("Lỗi lấy link từ Sheet", msg, parent=self))
                 
-                self.after(10, self._reenable_fetch_button) # Bật lại nút "Thêm từ Sheet"
+                if hasattr(self, 'download_view_frame'): self.after(10, self.download_view_frame._reenable_fetch_button) # Bật lại nút "Thêm từ Sheet"
 
 
 
@@ -23388,16 +22720,7 @@ class SubtitleApp(ctk.CTk):
             messagebox.showerror("Lỗi cập nhật", "Không thể hiển thị link lấy được từ Google Sheet.", parent=self)
 
 
-# Hàm hỗ trợ UI: Bật lại nút 'Thêm từ Sheet'
-    def _reenable_fetch_button(self):
-        """ Bật lại nút 'Thêm từ Sheet' sau khi xử lý xong """
-        if hasattr(self, 'add_sheet_button') and self.add_sheet_button and self.add_sheet_button.winfo_exists():
-            try:
-                self.add_sheet_button.configure(state="normal", text="📑 Thêm từ Sheet")
-            except Exception as e:
-                 logging.warning(f"Không thể bật lại nút Thêm từ Sheet: {e}")
-        else:
-             logging.warning("Không thể bật lại nút 'Thêm từ Sheet': Không tìm thấy tham chiếu hoặc nút đã bị hủy.")
+# Hàm hỗ trợ UI: Bật lại nút 'Thêm từ Sheet' - ĐÃ DI CHUYỂN SANG DownloadTab
 
 
 # Hàm đồng bộ (ít dùng): Lấy link từ Sheet (không chạy luồng)
