@@ -73,6 +73,7 @@ from ui.popups.metadata_manager import MetadataManagerWindow
 from ui.popups.subtitle_style_settings import SubtitleStyleSettingsWindow
 from ui.tabs.ai_editor_tab import AIEditorTab
 from ui.tabs.download_tab import DownloadTab
+from ui.tabs.subtitle_tab import SubtitleTab
 from utils.logging_utils import setup_logging, log_failed_task
 from ui.utils.ui_helpers import is_ui_alive, safe_after, update_path_label, norm_no_diacritics, is_readyish, locked_msg_for_view, ready_msg_for_view
 from services.youtube_upload_service import upload_youtube_thumbnail, get_playlist_id_by_name, add_video_to_playlist
@@ -1347,7 +1348,9 @@ class SubtitleApp(ctk.CTk):
 
         # --- Khởi tạo Giao diện ---
         self.tab_view = None
-        self.subtitle_textbox = None
+        # subtitle_textbox giờ nằm trong SubtitleTab (self.subtitle_view_frame)
+        # Giữ lại self.subtitle_textbox = None để tương thích, nhưng sẽ truy cập qua property
+        self._subtitle_textbox_ref = None
         self.status_label = None
         self.queue_section = None # Hàng chờ Phụ đề
         self.output_display_label = None # Hiển thị đường dẫn output Phụ đề
@@ -1714,15 +1717,14 @@ class SubtitleApp(ctk.CTk):
         self.main_content_frame.pack(expand=True, fill="both", padx=10, pady=(0, 10))
 
         # Khai báo các frame cho từng tab
-        self.subtitle_view_frame = ctk.CTkFrame(self.main_content_frame, fg_color="transparent")
+        self.subtitle_view_frame = SubtitleTab(master=self.main_content_frame, master_app=self)
         self.download_view_frame = DownloadTab(master=self.main_content_frame, master_app=self)
         self.dubbing_view_frame = ctk.CTkFrame(self.main_content_frame, fg_color="transparent")
         self.youtube_upload_view_frame = ctk.CTkFrame(self.main_content_frame, fg_color="transparent")
         
         self.ai_editor_view_frame = AIEditorTab(master=self.main_content_frame, master_app=self)
-
+        
         # Gọi các hàm để tạo nội dung cho từng tab
-        self._create_subtitle_tab(self.subtitle_view_frame)
         self._create_dubbing_tab(self.dubbing_view_frame)
         self._create_youtube_upload_tab(self.youtube_upload_view_frame) 
         
@@ -1877,10 +1879,14 @@ class SubtitleApp(ctk.CTk):
 
 
 #===========================================================================================================================================================================
-# HÀM DỰNG GIAO DIỆN: TẠO CÁC THÀNH PHẦN UI CHO TAB 'TẠO PHỤ ĐỀ' - PHIÊN BẢN CẬP NHẬT (THEME-AWARE)
+# HÀM DỰNG GIAO DIỆN: TẠO CÁC THÀNH PHẦN UI CHO TAB 'TẠO PHỤ ĐỀ' - ĐÃ REFACTOR SANG SubtitleTab (ui/tabs/subtitle_tab.py)
+# Các hàm _create_subtitle_* đã được di chuyển vào class SubtitleTab
 
-    def _create_subtitle_tab(self, parent_frame):
-        """ Tạo các thành phần UI cho chế độ xem 'Tạo Phụ Đề' với màu sắc và layout tương thích theme. """
+#===========================================================================================================================================================================
+# HÀM DỰNG GIAO DIỆN: TẠO CÁC THÀNH PHẦN UI CHO TAB 'THUYẾT MINH'
+
+    def _create_dubbing_action_buttons_section(self, parent_frame, special_action_button_color, special_action_hover_color, danger_button_color, danger_button_hover_color):
+        """Create action buttons section for Dubbing tab"""
         logging.debug("Đang tạo UI Chế độ xem Phụ đề (Theme-Aware)...")
 
         # --- Định nghĩa các màu sắc thích ứng theme ---
@@ -10329,67 +10335,72 @@ class SubtitleApp(ctk.CTk):
         if is_app_active:
             split_and_merge_controls_state = main_action_state_if_active
 
+        # Truy cập widgets qua subtitle_view_frame (SubtitleTab)
+        subtitle_tab = getattr(self, 'subtitle_view_frame', None)
+        if not subtitle_tab:
+            return  # Nếu SubtitleTab chưa được tạo thì bỏ qua
+
         # --- Nút "Bắt đầu SUB" / "Bắt đầu Ghép Thủ Công" ---
-        if hasattr(self, 'sub_button') and self.sub_button.winfo_exists():
+        sub_button = getattr(subtitle_tab, 'sub_button', None)
+        if sub_button and sub_button.winfo_exists():
             if not is_app_active:
-                self.sub_button.configure(state=ctk.DISABLED, text=unactivated_text_short)
+                sub_button.configure(state=ctk.DISABLED, text=unactivated_text_short)
             elif subbing_active:
-                self.sub_button.configure(state=ctk.DISABLED, text="⏳ Đang xử lý...")
+                sub_button.configure(state=ctk.DISABLED, text="⏳ Đang xử lý...")
             elif getattr(self, 'ai_batch_queue', None):  # Nếu có hàng chờ AI
-                self.sub_button.configure(text="🚀 Bắt đầu Lô AI", state=final_main_action_state)
+                sub_button.configure(text="🚀 Bắt đầu Lô AI", state=final_main_action_state)
             elif is_manual_mode:
-                self.sub_button.configure(text="🔨 Bắt đầu Ghép Thủ Công", state=final_main_action_state)
+                sub_button.configure(text="🔨 Bắt đầu Ghép Thủ Công", state=final_main_action_state)
             else:  # Tự động (Whisper)
-                self.sub_button.configure(text="▶ Bắt đầu SUB", state=final_main_action_state)
+                sub_button.configure(text="▶ Bắt đầu SUB", state=final_main_action_state)
 
         # Nút "Sub & Dub"
-        if hasattr(self, 'sub_and_dub_button') and self.sub_and_dub_button.winfo_exists():
+        sub_and_dub_button = getattr(subtitle_tab, 'sub_and_dub_button', None)
+        if sub_and_dub_button and sub_and_dub_button.winfo_exists():
             sub_dub_text = "🎤 Sub & Dub" if is_app_active else unactivated_text_short
-            self.sub_and_dub_button.configure(state=final_main_action_state, text=sub_dub_text)
+            sub_and_dub_button.configure(state=final_main_action_state, text=sub_dub_text)
 
         # Nút "Thêm File (Sub)" (tắt khi manual_mode để tránh lệch logic)
-        if hasattr(self, 'add_button') and self.add_button.winfo_exists():
+        add_button = getattr(subtitle_tab, 'add_button', None)
+        if add_button and add_button.winfo_exists():
             add_button_text = "➕ Thêm File (Sub)" if is_app_active else unactivated_text_short
             can_add_file_now = (not subbing_active) and is_app_active and (not is_manual_mode)
-            self.add_button.configure(state=(ctk.NORMAL if can_add_file_now else ctk.DISABLED), text=add_button_text)
+            add_button.configure(state=(ctk.NORMAL if can_add_file_now else ctk.DISABLED), text=add_button_text)
 
         # Nút "Mở Thư Mục Sub" (cho mở tự do như logic gốc)
-        if hasattr(self, 'open_sub_output_folder_button') and self.open_sub_output_folder_button.winfo_exists():
-            self.open_sub_output_folder_button.configure(state=ctk.NORMAL)
+        open_sub_output_folder_button = getattr(subtitle_tab, 'open_sub_output_folder_button', None)
+        if open_sub_output_folder_button and open_sub_output_folder_button.winfo_exists():
+            open_sub_output_folder_button.configure(state=ctk.NORMAL)
 
         # Nút "Chọn Output"
-        if hasattr(self, 'choose_output_dir_button') and self.choose_output_dir_button.winfo_exists():
+        choose_output_dir_button = getattr(subtitle_tab, 'choose_output_dir_button', None)
+        if choose_output_dir_button and choose_output_dir_button.winfo_exists():
             choose_output_text = "Chọn Output" if is_app_active else unactivated_text_short
-            self.choose_output_dir_button.configure(state=final_main_action_state, text=choose_output_text)
+            choose_output_dir_button.configure(state=final_main_action_state, text=choose_output_text)
 
         # Nút "Logo/Intro" (Tab Sub)
-        if hasattr(self, 'branding_settings_button_sub_tab') and self.branding_settings_button_sub_tab.winfo_exists():
+        branding_settings_button_sub_tab = getattr(subtitle_tab, 'branding_settings_button_sub_tab', None)
+        if branding_settings_button_sub_tab and branding_settings_button_sub_tab.winfo_exists():
             branding_text_sub = "🖼 Logo/Intro" if is_app_active else unactivated_text_short
-            self.branding_settings_button_sub_tab.configure(state=final_main_action_state, text=branding_text_sub)
+            branding_settings_button_sub_tab.configure(state=final_main_action_state, text=branding_text_sub)
 
         # Nút "Tùy chỉnh Kiểu Phụ đề"
-        if hasattr(self, 'subtitle_style_settings_button') and self.subtitle_style_settings_button.winfo_exists():
+        subtitle_style_settings_button = getattr(subtitle_tab, 'subtitle_style_settings_button', None)
+        if subtitle_style_settings_button and subtitle_style_settings_button.winfo_exists():
             style_text_sub = "🎨 Tùy chỉnh Kiểu Phụ đề (Hardsub)..." if is_app_active else unactivated_text_short
-            self.subtitle_style_settings_button.configure(state=final_main_action_state, text=style_text_sub)
+            subtitle_style_settings_button.configure(state=final_main_action_state, text=style_text_sub)
 
         # --- Khung Cấu hình Whisper ---
-        whisper_widgets_to_set_sub = [
-            getattr(self, 'model_menu', None),
-            getattr(self, 'lang_menu', None),
-            getattr(self, 'format_menu', None)
-        ]
-        for widget in whisper_widgets_to_set_sub:
-            if widget and hasattr(widget, 'configure') and widget.winfo_exists():
-                widget.configure(state=whisper_translate_controls_state_effective)
+        # Lưu ý: model_menu, lang_menu, format_menu có thể là local variables, bỏ qua vì không được lưu trong SubtitleTab
 
         # --- Khung Dịch Phụ Đề ---
-        translate_widgets_general_state_to_set_sub = [
-            getattr(self, 'bilingual_checkbox', None),
-            getattr(self, 'engine_menu', None),
-        ]
-        for widget in translate_widgets_general_state_to_set_sub:
-            if widget and hasattr(widget, 'configure') and widget.winfo_exists():
-                widget.configure(state=whisper_translate_controls_state_effective)
+        bilingual_checkbox = getattr(subtitle_tab, 'bilingual_checkbox', None)
+        if bilingual_checkbox and bilingual_checkbox.winfo_exists():
+            bilingual_checkbox.configure(state=whisper_translate_controls_state_effective)
+
+        engine_menu = getattr(subtitle_tab, 'engine_menu', None)
+        if engine_menu and engine_menu.winfo_exists():
+            engine_menu.configure(state=whisper_translate_controls_state_effective)
 
         current_engine_sub = self.translation_engine_var.get() if hasattr(self, 'translation_engine_var') else "Không dịch"
         target_lang_menu_state_sub = ctk.DISABLED
@@ -10400,47 +10411,56 @@ class SubtitleApp(ctk.CTk):
             if "ChatGPT API" in current_engine_sub:
                 openai_style_menu_state_sub = ctk.NORMAL
 
-        if hasattr(self, 'target_lang_menu') and self.target_lang_menu.winfo_exists():
-            self.target_lang_menu.configure(state=target_lang_menu_state_sub)
-        if hasattr(self, 'openai_style_menu') and self.openai_style_menu.winfo_exists():
-            self.openai_style_menu.configure(state=openai_style_menu_state_sub)
+        target_lang_menu = getattr(subtitle_tab, 'target_lang_menu', None)
+        if target_lang_menu and target_lang_menu.winfo_exists():
+            target_lang_menu.configure(state=target_lang_menu_state_sub)
+        
+        openai_style_menu = getattr(subtitle_tab, 'openai_style_menu', None)
+        if openai_style_menu and openai_style_menu.winfo_exists():
+            openai_style_menu.configure(state=openai_style_menu_state_sub)
 
-        if hasattr(self, 'openai_style_frame') and self.openai_style_frame.winfo_exists():
+        openai_style_frame = getattr(subtitle_tab, 'openai_style_frame', None)
+        target_lang_frame = getattr(subtitle_tab, 'target_lang_frame', None)
+        if openai_style_frame and openai_style_frame.winfo_exists():
             if openai_style_menu_state_sub == ctk.NORMAL:
-                if not self.openai_style_frame.winfo_ismapped() and hasattr(self, 'target_lang_frame') and self.target_lang_frame.winfo_exists():
-                    self.openai_style_frame.pack(fill='x', padx=10, pady=(0, 5), after=self.target_lang_frame)
+                if not openai_style_frame.winfo_ismapped() and target_lang_frame and target_lang_frame.winfo_exists():
+                    openai_style_frame.pack(fill='x', padx=10, pady=(0, 5), after=target_lang_frame)
             else:
-                if self.openai_style_frame.winfo_ismapped():
-                    self.openai_style_frame.pack_forget()
+                if openai_style_frame.winfo_ismapped():
+                    openai_style_frame.pack_forget()
 
         # Nút API Keys (tab dịch) – cho mở khi đã kích hoạt
-        if hasattr(self, 'api_settings_button_translate_tab') and self.api_settings_button_translate_tab.winfo_exists():
-            self.api_settings_button_translate_tab.configure(state=(ctk.NORMAL if is_app_active else ctk.DISABLED))
+        api_settings_button_translate_tab = getattr(subtitle_tab, 'api_settings_button_translate_tab', None)
+        if api_settings_button_translate_tab and api_settings_button_translate_tab.winfo_exists():
+            api_settings_button_translate_tab.configure(state=(ctk.NORMAL if is_app_active else ctk.DISABLED))
 
         # --- Khung Gộp Sub & Tùy chọn ---
-        if hasattr(self, 'merge_sub_segmented_button_ref') and self.merge_sub_segmented_button_ref.winfo_exists():
-            self.merge_sub_segmented_button_ref.configure(state=final_main_action_state)
+        merge_sub_segmented_button_ref = getattr(subtitle_tab, 'merge_sub_segmented_button_ref', None)
+        if merge_sub_segmented_button_ref and merge_sub_segmented_button_ref.winfo_exists():
+            merge_sub_segmented_button_ref.configure(state=final_main_action_state)
 
-        if hasattr(self, 'manual_merge_mode_checkbox') and self.manual_merge_mode_checkbox.winfo_exists():
-            self.manual_merge_mode_checkbox.configure(
+        manual_merge_mode_checkbox = getattr(subtitle_tab, 'manual_merge_mode_checkbox', None)
+        if manual_merge_mode_checkbox and manual_merge_mode_checkbox.winfo_exists():
+            manual_merge_mode_checkbox.configure(
                 state=(ctk.NORMAL if (is_app_active and not subbing_active) else ctk.DISABLED)
             )
 
         pause_edit_final_state_sub = ctk.DISABLED
         if is_app_active and not subbing_active and not is_manual_mode:
             pause_edit_final_state_sub = ctk.NORMAL
-        if hasattr(self, 'pause_edit_checkbox') and self.pause_edit_checkbox.winfo_exists():
-            self.pause_edit_checkbox.configure(state=pause_edit_final_state_sub)
+        pause_edit_checkbox = getattr(subtitle_tab, 'pause_edit_checkbox', None)
+        if pause_edit_checkbox and pause_edit_checkbox.winfo_exists():
+            pause_edit_checkbox.configure(state=pause_edit_final_state_sub)
             if not is_app_active or is_manual_mode:
                 if hasattr(self, 'pause_for_edit_var'):
                     self.pause_for_edit_var.set(False)
 
         # --- Khóa/Mở nhóm nút Sub Editor + khôi phục text gốc khi mở ---
         sub_editor_buttons = [
-            getattr(self, 'open_sub_button_ref', None),        # Mở Sub
-            getattr(self, 'edit_sub_button_ref', None),        # Sửa Sub
-            getattr(self, 'save_sub_button_ref', None),        # Lưu Sub
-            getattr(self, 'sub_clear_content_button', None),   # Xóa nội dung
+            getattr(subtitle_tab, 'open_sub_button_ref', None),        # Mở Sub
+            getattr(subtitle_tab, 'edit_sub_button_ref', None),        # Sửa Sub
+            getattr(subtitle_tab, 'save_sub_button_ref', None),        # Lưu Sub
+            getattr(subtitle_tab, 'sub_clear_content_button', None),   # Xóa nội dung
         ]
 
         def _lock_button_with_label(w):
@@ -10482,11 +10502,11 @@ class SubtitleApp(ctk.CTk):
                 'sub_clear_content_button':  "Xóa nội dung",
             }
             for name in ('open_sub_button_ref','edit_sub_button_ref','save_sub_button_ref','sub_clear_content_button'):
-                w = getattr(self, name, None)
+                w = getattr(subtitle_tab, name, None)
                 _unlock_button_restore_label(w, enable=(not is_busy_here), fallback_text=defaults.get(name))
 
 
-        optimize_tts_checkbox = getattr(self, 'optimize_whisper_tts_voice_checkbox', None)
+        optimize_tts_checkbox = getattr(subtitle_tab, 'optimize_whisper_tts_voice_checkbox', None)
         if optimize_tts_checkbox and optimize_tts_checkbox.winfo_exists():
             if not is_app_active or subbing_active or is_manual_mode:
                 optimize_tts_checkbox.configure(state=ctk.DISABLED)
@@ -10495,21 +10515,22 @@ class SubtitleApp(ctk.CTk):
             else:
                 optimize_tts_checkbox.configure(state=ctk.NORMAL)
 
-        if hasattr(self, 'continue_merge_button') and self.continue_merge_button.winfo_exists():
+        continue_merge_button_widget = getattr(subtitle_tab, 'continue_merge_button', None)
+        if continue_merge_button_widget and continue_merge_button_widget.winfo_exists():
             is_actively_paused_for_edit_local = (
                 is_app_active and
                 subbing_active and
                 bool(getattr(self, 'is_actively_paused_for_edit', False))
             )
-            self.continue_merge_button.configure(state=(ctk.NORMAL if is_actively_paused_for_edit_local else ctk.DISABLED))
+            continue_merge_button_widget.configure(state=(ctk.NORMAL if is_actively_paused_for_edit_local else ctk.DISABLED))
 
         # --- Khung Chia Phụ đề ---
         split_widgets = [
-            getattr(self, 'enable_split_checkbox', None),
-            getattr(self, 'max_chars_entry', None),
-            getattr(self, 'max_lines_entry', None),
-            getattr(self, 'split_mode_menu', None),
-            getattr(self, 'sub_cps_entry', None)
+            getattr(subtitle_tab, 'enable_split_checkbox_ref', None),
+            getattr(subtitle_tab, 'max_chars_entry_ref', None),
+            getattr(subtitle_tab, 'max_lines_entry_ref', None),
+            getattr(subtitle_tab, 'split_mode_menu', None),
+            getattr(subtitle_tab, 'sub_cps_entry', None)
         ]
         for widget in split_widgets:
             if widget and hasattr(widget, 'configure') and widget.winfo_exists():
@@ -10520,9 +10541,9 @@ class SubtitleApp(ctk.CTk):
 
         # --- Khung Tùy chọn Gộp Khối ---
         block_merge_widgets = [
-            getattr(self, 'enable_block_merging_checkbox', None),
-            getattr(self, 'merge_time_gap_entry', None),
-            getattr(self, 'merge_max_len_entry', None)
+            getattr(subtitle_tab, 'enable_block_merging_checkbox', None),
+            getattr(subtitle_tab, 'merge_time_gap_entry', None),
+            getattr(subtitle_tab, 'merge_max_len_entry', None)
         ]
         for widget in block_merge_widgets:
             if widget and hasattr(widget, 'configure') and widget.winfo_exists():
@@ -10532,18 +10553,18 @@ class SubtitleApp(ctk.CTk):
             self.after(20, self._toggle_block_merge_options_state)
 
         # --- Khung Tự động định dạng SRT ---
-        auto_format_frame = getattr(self, 'auto_format_srt_frame', None)
+        auto_format_frame = getattr(subtitle_tab, 'auto_format_srt_frame', None)
         if auto_format_frame and auto_format_frame.winfo_exists():
             for widget in auto_format_frame.winfo_children():
                 if hasattr(widget, 'configure'):
                     widget.configure(state=split_and_merge_controls_state)
 
         # --- FINAL CLAMP: Khoá cứng checkbox 'Dừng lại để chỉnh sửa sub' ---
-        pecb = getattr(self, 'pause_edit_checkbox', None)
-        if pecb and pecb.winfo_exists():
+        # pecb = pause_edit_checkbox đã được lấy ở trên
+        if pause_edit_checkbox and pause_edit_checkbox.winfo_exists():
             # Điều kiện để VÔ HIỆU HÓA checkbox (vẫn giữ nguyên)
             must_lock = (not is_app_active) or bool(is_manual_mode) or bool(subbing_active)
-            pecb.configure(state=(ctk.DISABLED if must_lock else ctk.NORMAL))
+            pause_edit_checkbox.configure(state=(ctk.DISABLED if must_lock else ctk.NORMAL))
 
             # ***SỬA LỖI Ở ĐÂY***
             # Điều kiện để RESET (bỏ tick) checkbox:
@@ -10561,7 +10582,7 @@ class SubtitleApp(ctk.CTk):
 
         allow_interaction = (not subbing_active) or bool(getattr(self, 'is_actively_paused_for_edit', False))
 
-        ai_edit_btn_sub = getattr(self, 'ai_edit_button_sub_tab', None)
+        ai_edit_btn_sub = getattr(subtitle_tab, 'ai_edit_button_sub_tab', None)
         if ai_edit_btn_sub and ai_edit_btn_sub.winfo_exists():
             if not is_app_active:
                 ai_edit_btn_sub.configure(state=ctk.DISABLED, text=unactivated_text_short)
@@ -10570,7 +10591,7 @@ class SubtitleApp(ctk.CTk):
                 final_state = ctk.NORMAL if (can_use_ai and allow_interaction) else ctk.DISABLED
                 ai_edit_btn_sub.configure(state=final_state, text="✨ Biên tập (AI)")
 
-        dalle_btn_sub = getattr(self, 'dalle_button_sub_tab', None)
+        dalle_btn_sub = getattr(subtitle_tab, 'dalle_button_sub_tab', None)
         if dalle_btn_sub and dalle_btn_sub.winfo_exists():
             if not is_app_active:
                 dalle_btn_sub.configure(state=ctk.DISABLED, text=unactivated_text_short)
@@ -10579,7 +10600,7 @@ class SubtitleApp(ctk.CTk):
                 final_state = ctk.NORMAL if (can_use_openai and allow_interaction) else ctk.DISABLED
                 dalle_btn_sub.configure(state=final_state, text="🎨 Tạo Ảnh AI")
 
-        imagen_btn_sub = getattr(self, 'imagen_button_sub_tab', None)
+        imagen_btn_sub = getattr(subtitle_tab, 'imagen_button_sub_tab', None)
         if imagen_btn_sub and imagen_btn_sub.winfo_exists():
             if not is_app_active:
                 imagen_btn_sub.configure(state=ctk.DISABLED, text=unactivated_text_short)
@@ -10589,7 +10610,8 @@ class SubtitleApp(ctk.CTk):
                 imagen_btn_sub.configure(state=final_state, text="🖼 Ảnh(Imagen)")
 
         # --- Nút Dừng ---
-        if hasattr(self, 'stop_button') and self.stop_button.winfo_exists():
+        stop_button = getattr(subtitle_tab, 'stop_button', None)
+        if stop_button and stop_button.winfo_exists():
             any_sub_tab_task_running = (
                 subbing_active or
                 bool(getattr(self, 'is_gpt_processing_script', False)) or
@@ -10598,19 +10620,20 @@ class SubtitleApp(ctk.CTk):
                 bool(getattr(self, 'is_gemini_processing', False)) or
                 bool(getattr(self, 'is_imagen_processing', False))
             )
-            self.stop_button.configure(state=(ctk.NORMAL if any_sub_tab_task_running else ctk.DISABLED))
+            stop_button.configure(state=(ctk.NORMAL if any_sub_tab_task_running else ctk.DISABLED))
 
         # --- Textbox phụ đề ---
-        if hasattr(self, 'subtitle_textbox') and self.subtitle_textbox.winfo_exists():
+        subtitle_textbox = getattr(subtitle_tab, 'subtitle_textbox', None)
+        if subtitle_textbox and subtitle_textbox.winfo_exists():
             if not is_app_active:
-                self.subtitle_textbox.configure(state=ctk.DISABLED)
+                subtitle_textbox.configure(state=ctk.DISABLED)
             elif subbing_active and not bool(getattr(self, 'is_actively_paused_for_edit', False)):
-                self.subtitle_textbox.configure(state=ctk.DISABLED)
+                subtitle_textbox.configure(state=ctk.DISABLED)
                 self.allow_edit_sub = False
             else:
                 # Khi active & không bận, cho nhập bình thường (nếu muốn)
                 try:
-                    self.subtitle_textbox.configure(state=ctk.NORMAL)
+                    subtitle_textbox.configure(state=ctk.NORMAL)
                 except Exception:
                     pass
 
@@ -10719,7 +10742,11 @@ class SubtitleApp(ctk.CTk):
 # Hàm hành động: Xóa nội dung trong ô log Sub
     def clear_subtitle_textbox_content(self):
         """ Xóa toàn bộ nội dung trong ô subtitle_textbox và bật chế độ nhập liệu. """
-        textbox_widget = getattr(self, 'subtitle_textbox', None)
+        subtitle_tab = getattr(self, 'subtitle_view_frame', None)
+        if not subtitle_tab:
+            logging.warning("Không tìm thấy SubtitleTab để xóa nội dung.")
+            return
+        textbox_widget = getattr(subtitle_tab, 'subtitle_textbox', None)
         if textbox_widget and textbox_widget.winfo_exists():
             try:
                 # 1. Luôn đặt state="normal" để cho phép xóa và nhập liệu
@@ -11861,11 +11888,16 @@ class SubtitleApp(ctk.CTk):
 
 # Hàm ẩn hiện các nút sub thủ công
     def _update_manual_mode_ui_elements(self):
+        # Truy cập widgets qua subtitle_view_frame (SubtitleTab)
+        subtitle_tab = getattr(self, 'subtitle_view_frame', None)
+        if not subtitle_tab:
+            return  # Nếu SubtitleTab chưa được tạo thì bỏ qua
 
         try:
             if not self._is_app_fully_activated():
-                if hasattr(self, 'pause_edit_checkbox') and self.pause_edit_checkbox.winfo_exists():
-                    self.pause_edit_checkbox.configure(state=ctk.DISABLED)
+                pause_edit_checkbox = getattr(subtitle_tab, 'pause_edit_checkbox', None)
+                if pause_edit_checkbox and pause_edit_checkbox.winfo_exists():
+                    pause_edit_checkbox.configure(state=ctk.DISABLED)
                 if hasattr(self, 'pause_for_edit_var'):
                     self.pause_for_edit_var.set(False)
                 return
@@ -11876,13 +11908,13 @@ class SubtitleApp(ctk.CTk):
         log_prefix = "[UI_ManualModeUpdate]"
         logging.debug(f"{log_prefix} Bắt đầu cập nhật UI. Chế độ thủ công: {'Bật' if is_manual_mode else 'Tắt'}")
 
-        merge_options_parent_frame = getattr(self, 'merge_and_pause_frame_ref', None)
-        manual_checkbox = getattr(self, 'manual_merge_mode_checkbox', None)
-        media_options_frame = getattr(self, 'sub_pause_media_options_frame', None)
-        pause_checkbox_auto = getattr(self, 'pause_edit_checkbox', None)
-        continue_button_auto = getattr(self, 'continue_merge_button', None)
-        auto_add_checkbox = getattr(self, 'auto_add_manual_task_checkbox', None)
-        save_local_checkbox = getattr(self, 'save_in_media_folder_checkbox', None)
+        merge_options_parent_frame = getattr(subtitle_tab, 'merge_and_pause_frame_ref', None)
+        manual_checkbox = getattr(subtitle_tab, 'manual_merge_mode_checkbox', None)
+        media_options_frame = getattr(subtitle_tab, 'sub_pause_media_options_frame', None)
+        pause_checkbox_auto = getattr(subtitle_tab, 'pause_edit_checkbox', None)
+        continue_button_auto = getattr(subtitle_tab, 'continue_merge_button', None)
+        auto_add_checkbox = getattr(subtitle_tab, 'auto_add_manual_task_checkbox', None)
+        save_local_checkbox = getattr(subtitle_tab, 'save_in_media_folder_checkbox', None)
         if not merge_options_parent_frame or not merge_options_parent_frame.winfo_exists():
             logging.warning(f"{log_prefix} merge_and_pause_frame_ref không tồn tại.")
             return
@@ -11890,11 +11922,11 @@ class SubtitleApp(ctk.CTk):
         # --- Logic chung cho các control Whisper/Dịch tự động ---
         whisper_translate_controls_state = ctk.DISABLED if is_manual_mode else ctk.NORMAL
         controls_to_toggle_whisper_translate = [
-            getattr(self, 'model_menu', None), 
-            getattr(self, 'lang_menu', None),
-            getattr(self, 'bilingual_checkbox', None),
-            getattr(self, 'engine_menu', None),
-            getattr(self, 'target_lang_menu', None),
+            None,  # model_menu không còn trong PiuApp, đã ở trong SubtitleTab nhưng không cần toggle ở đây
+            None,  # lang_menu tương tự
+            getattr(subtitle_tab, 'bilingual_checkbox', None),
+            getattr(subtitle_tab, 'engine_menu', None),
+            getattr(subtitle_tab, 'target_lang_menu', None),
         ]
         for control in controls_to_toggle_whisper_translate:
             if control and control.winfo_exists():
@@ -11911,8 +11943,9 @@ class SubtitleApp(ctk.CTk):
 
             if hasattr(self, 'bilingual_var'): self.bilingual_var.set(False)
             if hasattr(self, 'translation_engine_var'): self.translation_engine_var.set("Không dịch")
-            if hasattr(self, 'openai_style_frame') and self.openai_style_frame.winfo_ismapped():
-                self.openai_style_frame.pack_forget()
+            openai_style_frame = getattr(subtitle_tab, 'openai_style_frame', None)
+            if openai_style_frame and openai_style_frame.winfo_ismapped():
+                openai_style_frame.pack_forget()
         else: # Khi tắt manual mode, khôi phục UI dịch
             # Ẩn các control của chế độ thủ công
             if auto_add_checkbox and auto_add_checkbox.winfo_ismapped():
@@ -11963,18 +11996,21 @@ class SubtitleApp(ctk.CTk):
                     logging.debug(f"{log_prefix} Đã pack media_options_frame (sau: {target_widget_to_pack_after.winfo_name() if target_widget_to_pack_after else 'N/A'}).")
 
                 if is_manual_mode: # Chỉ reset khi vào manual mode và frame được hiển thị
-                    if hasattr(self, 'sub_pause_selected_media_info_label') and self.sub_pause_selected_media_info_label.winfo_exists():
-                        self.sub_pause_selected_media_info_label.configure(text="")
+                    sub_pause_selected_media_info_label = getattr(subtitle_tab, 'sub_pause_selected_media_info_label', None)
+                    if sub_pause_selected_media_info_label and sub_pause_selected_media_info_label.winfo_exists():
+                        sub_pause_selected_media_info_label.configure(text="")
                     self.sub_pause_selected_media_path = None
             else: # should_show_media_options is False
                 if media_options_frame.winfo_ismapped():
                     media_options_frame.pack_forget()
                     logging.debug(f"{log_prefix} Đã pack_forget media_options_frame.")
 
-            if hasattr(self, 'sub_pause_select_media_button') and self.sub_pause_select_media_button.winfo_exists():
-                self.sub_pause_select_media_button.configure(state=media_buttons_state)
-            if hasattr(self, 'sub_pause_select_folder_button') and self.sub_pause_select_folder_button.winfo_exists():
-                self.sub_pause_select_folder_button.configure(state=media_buttons_state)
+            sub_pause_select_media_button = getattr(subtitle_tab, 'sub_pause_select_media_button', None)
+            if sub_pause_select_media_button and sub_pause_select_media_button.winfo_exists():
+                sub_pause_select_media_button.configure(state=media_buttons_state)
+            sub_pause_select_folder_button = getattr(subtitle_tab, 'sub_pause_select_folder_button', None)
+            if sub_pause_select_folder_button and sub_pause_select_folder_button.winfo_exists():
+                sub_pause_select_folder_button.configure(state=media_buttons_state)
             logging.debug(f"{log_prefix} media_options_frame is_mapped: {media_options_frame.winfo_ismapped()}, media_buttons_state: {media_buttons_state}")
 
         # 3. Nút "Tiếp tục Gộp Sub" (continue_button_auto)
@@ -12011,7 +12047,9 @@ class SubtitleApp(ctk.CTk):
                 logging.debug(f"{log_prefix} continue_merge_button pack_forget (hoặc giữ nguyên nếu chưa map), state: DISABLED.")
 
         if is_manual_mode:
-            if self.current_srt_path or (hasattr(self, 'subtitle_textbox') and self.subtitle_textbox.get("1.0", "end-1c").strip()):
+            subtitle_tab_local = getattr(self, 'subtitle_view_frame', None)
+            subtitle_textbox_local = getattr(subtitle_tab_local, 'subtitle_textbox', None) if subtitle_tab_local else None
+            if self.current_srt_path or (subtitle_textbox_local and subtitle_textbox_local.winfo_exists() and subtitle_textbox_local.get("1.0", "end-1c").strip()):
                 self.enable_sub_editing()
         logging.debug(f"{log_prefix} Kết thúc cập nhật UI.")
 
