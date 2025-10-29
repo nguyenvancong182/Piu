@@ -291,22 +291,54 @@ class APISettingsWindow(ctk.CTkToplevel):
 
             genai.configure(api_key=api_key_to_test)
 
-            logging.debug("[API Check] Đang thử tạo model và generate_content('test')...")
+            logging.debug("[API Check] Đang thử kiểm tra API key bằng list_models()...")
             
-            # Khởi tạo model
-            model = genai.GenerativeModel('gemini-1.5-pro-latest')
+            # Thử list_models() để kiểm tra API key (cách này ổn định hơn và không cần model name cụ thể)
+            models = genai.list_models()
             
-            # Thử gửi một yêu cầu generate_content cực nhỏ và vô hại.
-            # Đây là bài kiểm tra thực tế hơn nhiều so với list_models().
-            model.generate_content(
-                "test", 
-                generation_config=genai.types.GenerationConfig(max_output_tokens=1, temperature=0.0)
-            )
+            # Kiểm tra xem có model nào khả dụng không
+            model_names = [m.name for m in models]
+            logging.debug(f"[API Check] Số lượng models có sẵn: {len(model_names)}")
+            
+            # Nếu list_models() thành công và có models, API key đã hợp lệ
+            if not model_names:
+                raise Exception("Không tìm thấy model nào khả dụng.")
+            
+            # Thử test generate_content với một model nếu có thể (không bắt buộc)
+            tested_generate = False
+            for preferred_model in ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-pro', 'gemini-1.5-pro-latest']:
+                try:
+                    # Tìm model name đầy đủ từ danh sách
+                    full_model_name = None
+                    for m_name in model_names:
+                        if preferred_model in m_name.lower():
+                            full_model_name = m_name
+                            break
+                    
+                    if full_model_name:
+                        # Lấy short name từ full name (ví dụ: models/gemini-1.5-pro -> gemini-1.5-pro)
+                        short_name = full_model_name.split('/')[-1] if '/' in full_model_name else full_model_name
+                        logging.debug(f"[API Check] Đang thử test generate_content với model: {short_name}")
+                        model = genai.GenerativeModel(short_name)
+                        model.generate_content(
+                            "test", 
+                            generation_config=genai.types.GenerationConfig(max_output_tokens=1, temperature=0.0)
+                        )
+                        tested_generate = True
+                        logging.debug(f"[API Check] Test generate_content thành công với {short_name}")
+                        break
+                except Exception as test_e:
+                    # Bỏ qua lỗi khi test model này, thử model tiếp theo
+                    logging.debug(f"[API Check] Không thể test với {preferred_model}: {test_e}")
+                    continue
+            
+            if not tested_generate:
+                logging.debug("[API Check] Không test được generate_content, nhưng list_models() thành công nên API key vẫn hợp lệ.")
 
-            # Nếu dòng trên không gây lỗi, key và môi trường đều ổn.
-            status_message = "Key hợp lệ! (Kết nối thành công)"
+            # Nếu list_models() thành công (đã đến đây), key và môi trường đều ổn.
+            status_message = "✅ Key hợp lệ! (Kết nối thành công)"
             status_color = ("#0B8457", "lightgreen") # Xanh đậm cho nền sáng, xanh tươi cho nền tối
-            logging.info(f"[API Check] Kiểm tra Gemini Key thành công (bản nâng cấp).")
+            logging.info(f"[API Check] Kiểm tra Gemini Key thành công. Tìm thấy {len(model_names)} model(s) khả dụng.")
 
         except google_api_exceptions.PermissionDenied as e:
             logging.warning(f"[API Check] Lỗi xác thực Gemini: {e}")
@@ -314,8 +346,13 @@ class APISettingsWindow(ctk.CTkToplevel):
             status_color = "orange"
         except google_api_exceptions.GoogleAPICallError as e:
             # Lỗi này có thể do mạng hoặc các vấn đề kết nối khác
-            logging.error(f"[API Check] Lỗi gọi API Google (có thể do mạng): {e}")
-            status_message = "Lỗi: Không kết nối được tới Google."
+            error_str = str(e)
+            if "404" in error_str or "not found" in error_str.lower():
+                logging.warning(f"[API Check] Lỗi model không tìm thấy: {e}")
+                status_message = "Lỗi: Model không khả dụng, nhưng API key có thể hợp lệ. Vui lòng thử lại."
+            else:
+                logging.error(f"[API Check] Lỗi gọi API Google (có thể do mạng): {e}")
+                status_message = "Lỗi: Không kết nối được tới Google."
             status_color = "red"
         except Exception as e:
             # Bắt tất cả các lỗi khác, bao gồm cả "Illegal header value" nếu nó xảy ra ở đây

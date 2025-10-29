@@ -208,12 +208,12 @@ class SubtitleTab(ctk.CTkFrame):
             btn_row_1_sub, text="➕ Thêm File (TC)", height=35,
             font=("Segoe UI", 13, "bold"), command=self.master_app._add_manual_sub_task_to_queue
         )
-        self.add_manual_task_button.pack(side="left", expand=True, fill="x", padx=(2, 0))
+        # Không pack ngay, để _on_toggle_manual_merge_mode quản lý hiển thị
         
-        self.add_button = ctk.CTkButton(btn_row_1_sub, text="➕ Thêm File (Tự động)",
+        self.add_button = ctk.CTkButton(btn_row_1_sub, text="➕ Thêm File (Sub)",
                                         height=35, font=("Segoe UI", 13, "bold"),
                                         command=self.master_app.add_files_to_queue)
-        self.add_button.pack(fill="x", pady=(5, 0))
+        # Không pack ngay, để _on_toggle_manual_merge_mode quản lý hiển thị
 
         # Hàng 2: Bắt đầu SUB (chiếm cả hàng)
         self.sub_button = ctk.CTkButton(action_buttons_main_frame, text="🎬 Bắt đầu SUB",
@@ -493,7 +493,7 @@ class SubtitleTab(ctk.CTkFrame):
 
         self.manual_queue_section = ctk.CTkScrollableFrame(self.right_panel_sub, label_text="📋 Hàng chờ Ghép Thủ Công", label_font=("Poppins", 14, "bold"), height=150)
         self.queue_section = ctk.CTkScrollableFrame(self.right_panel_sub, label_text="📋 Hàng chờ (Sub Tự động)", label_font=("Poppins", 14, "bold"), height=150)
-        self.queue_section.pack(fill="x", padx=10, pady=(10, 5))
+        # Không pack ngay ở đây, để _on_toggle_manual_merge_mode quản lý việc hiển thị
 
         self.sub_edit_frame = ctk.CTkFrame(self.right_panel_sub, fg_color="transparent")
         self.sub_edit_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))

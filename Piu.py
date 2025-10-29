@@ -843,7 +843,6 @@ class SubtitleApp(ctk.CTk):
         # --------------------
 
         # --- Biến & Cấu hình Cụ thể cho Tải xuống ---
-        self.download_url_text = None
         self.download_playlist_var = ctk.BooleanVar(value=self.cfg.get("download_playlist", False))
         # Sử dụng get_default_downloads_folder nếu chưa có trong config
         self.disable_auto_sheet_check_var = ctk.BooleanVar(value=self.cfg.get("disable_auto_sheet_check", False))
@@ -898,17 +897,6 @@ class SubtitleApp(ctk.CTk):
         
         self.download_retry_counts = {} 
         self.globally_completed_urls = set() 
-
-        # Tham chiếu UI sẽ được gán trong _create_download_tab
-        self.download_progress_bar = None
-        self.download_log_textbox = None
-        self.download_path_display_label = None
-        self.download_start_button = None
-        self.download_stop_button = None
-        self.download_sound_button = None
-        self.download_rename_entry = None
-        self.download_rename_entry_frame = None
-        self.download_queue_section = None # Thêm tham chiếu cho khu vực hàng chờ download
 
         # --- Tối ưu Lưu Cấu Hình: Xóa/Comment các dòng trace_add gọi save_current_config ---
         self.model_var.trace_add("write", self.on_model_change)
@@ -1354,7 +1342,6 @@ class SubtitleApp(ctk.CTk):
         self.status_label = None
         self.queue_section = None # Hàng chờ Phụ đề
         self.output_display_label = None # Hiển thị đường dẫn output Phụ đề
-        self.sub_button = None
         self.stop_button = None
         self.add_button = None
         # Đăng ký lệnh xác thực cho ô nhập liệu
@@ -1881,490 +1868,6 @@ class SubtitleApp(ctk.CTk):
 #===========================================================================================================================================================================
 # HÀM DỰNG GIAO DIỆN: TẠO CÁC THÀNH PHẦN UI CHO TAB 'TẠO PHỤ ĐỀ' - ĐÃ REFACTOR SANG SubtitleTab (ui/tabs/subtitle_tab.py)
 # Các hàm _create_subtitle_* đã được di chuyển vào class SubtitleTab
-
-#===========================================================================================================================================================================
-# HÀM DỰNG GIAO DIỆN: TẠO CÁC THÀNH PHẦN UI CHO TAB 'THUYẾT MINH'
-
-    def _create_dubbing_action_buttons_section(self, parent_frame, special_action_button_color, special_action_hover_color, danger_button_color, danger_button_hover_color):
-        """Create action buttons section for Dubbing tab"""
-        logging.debug("Đang tạo UI Chế độ xem Phụ đề (Theme-Aware)...")
-
-        # --- Định nghĩa các màu sắc thích ứng theme ---
-        colors = get_theme_colors()
-        panel_bg_color = colors["panel_bg"]
-        card_bg_color = colors["card_bg"]
-        textbox_bg_color = colors["textbox_bg"]
-        danger_button_color = colors["danger_button"]
-        danger_button_hover_color = colors["danger_button_hover"]
-        special_action_button_color = colors["special_action_button"]
-        special_action_hover_color = colors["special_action_hover"]
-
-        main_frame_sub = ctk.CTkFrame(parent_frame, fg_color="transparent")
-        main_frame_sub.pack(fill="both", expand=True)
-
-        main_frame_sub.grid_columnconfigure(0, weight=1, uniform="panelgroup")
-        main_frame_sub.grid_columnconfigure(1, weight=2, uniform="panelgroup")
-        main_frame_sub.grid_rowconfigure(0, weight=1)
-
-        # --- KHUNG BÊN TRÁI - CONTAINER CỐ ĐỊNH CHIỀU RỘNG ---
-        # Sử dụng màu nền panel
-        left_panel_container = ctk.CTkFrame(main_frame_sub, fg_color=panel_bg_color, corner_radius=12)
-        left_panel_container.grid(row=0, column=0, padx=(0, 10), pady=0, sticky="nsew")
-        left_panel_container.pack_propagate(False)
-
-        left_scrollable_content = ctk.CTkScrollableFrame(
-            left_panel_container,
-            fg_color="transparent" # Trong suốt để hiện màu của panel cha
-        )
-        left_scrollable_content.pack(expand=True, fill="both", padx=0, pady=0)
-
-        # --- Cụm nút hành động chính ---
-        self._create_subtitle_action_buttons_section(left_scrollable_content, danger_button_color, danger_button_hover_color)
-
-        # --- KHUNG CHỨA THƯ MỤC OUTPUT ---
-        self._create_subtitle_output_config_section(left_scrollable_content, card_bg_color)
-        
-        # --- Khung Cấu hình Whisper ---
-        self._create_subtitle_whisper_config_section(left_scrollable_content, card_bg_color)
-
-        # --- KHUNG DỊCH PHỤ ĐỀ ---
-        self._create_subtitle_translation_config_section(left_scrollable_content, card_bg_color, special_action_button_color, special_action_hover_color)
-
-        # --- KHUNG GỘP SUB & TÙY CHỌN ---
-        self._create_subtitle_merge_options_section(left_scrollable_content, card_bg_color)
-
-        # --- KHUNG CHIA PHỤ ĐỀ ---
-        self._create_subtitle_split_config_section(left_scrollable_content, card_bg_color)
-
-        # --- KHUNG BÊN PHẢI (Hàng chờ & Trình chỉnh sửa Phụ đề) ---
-        self._create_subtitle_right_panel(main_frame_sub, panel_bg_color, card_bg_color, textbox_bg_color, special_action_button_color, special_action_hover_color)
-        
-        # --- KHUNG MỚI: TÙY CHỈNH NHỊP ĐIỆU & TỐC ĐỘ ĐỌC (BỐ CỤC GRID - CÂN ĐỐI) ---
-        self._create_subtitle_pacing_section(left_scrollable_content, card_bg_color)
-
-        logging.debug("Tạo UI Chế độ xem Phụ đề hoàn tất (đã cập nhật màu sắc tương thích theme).")
-
-    def _create_subtitle_action_buttons_section(self, parent_frame, danger_button_color, danger_button_hover_color):
-        """
-        Create action buttons section for Subtitle tab.
-        
-        Args:
-            parent_frame: Parent frame to add buttons to
-            danger_button_color: Color tuple for danger button
-            danger_button_hover_color: Hover color tuple for danger button
-        """
-        action_buttons_main_frame = ctk.CTkFrame(parent_frame, fg_color="transparent")
-        action_buttons_main_frame.pack(pady=10, padx=10, fill="x")
-
-        btn_row_1_sub = ctk.CTkFrame(action_buttons_main_frame, fg_color="transparent")
-        btn_row_1_sub.pack(fill="x", pady=(0, 5))
-
-        self.sub_and_dub_button = ctk.CTkButton(
-            btn_row_1_sub, text="🎤 Sub & Dub", height=35,
-            font=("Segoe UI", 13, "bold"), command=self._handle_sub_and_dub_button_action
-        )
-        self.sub_and_dub_button.pack(side="left", expand=True, fill="x", padx=(0, 2))
-
-        self.add_manual_task_button = ctk.CTkButton(
-            btn_row_1_sub, text="➕ Thêm File (TC)", height=35,
-            font=("Segoe UI", 13, "bold"), command=self._add_manual_sub_task_to_queue
-        )
-        
-        self.add_button = ctk.CTkButton(btn_row_1_sub, text="➕ Thêm File (Tự động)",
-                                        height=35, font=("Segoe UI", 13, "bold"),
-                                        command=self.add_files_to_queue)
-
-        # Hàng 2: Bắt đầu SUB (chiếm cả hàng)
-        self.sub_button = ctk.CTkButton(action_buttons_main_frame, text="🎬 Bắt đầu SUB",
-                                        height=45, font=("Segoe UI", 15, "bold"),
-                                        command=self._handle_start_sub_button_action
-                                        )
-        self.sub_button.pack(fill="x", pady=5)
-
-        # Hàng 3: Chứa nút "Dừng Sub" (trái) và "Mở Thư Mục Sub" (phải)
-        btn_row_3_controls = ctk.CTkFrame(action_buttons_main_frame, fg_color="transparent")
-        btn_row_3_controls.pack(fill="x", pady=(5, 0))
-        btn_row_3_controls.grid_columnconfigure((0, 1), weight=1)
-        
-        self.stop_button = ctk.CTkButton(
-            btn_row_3_controls, text="🛑 Dừng Sub", height=35, font=("Segoe UI", 13, "bold"),
-            command=self.stop_processing,
-            fg_color=danger_button_color,
-            hover_color=danger_button_hover_color,
-            state=ctk.DISABLED, border_width=0
-        )
-        self.stop_button.grid(row=0, column=0, padx=(0, 2), pady=0, sticky="ew")
-
-        self.open_sub_output_folder_button = ctk.CTkButton(
-            btn_row_3_controls, text="📂 Mở Thư Mục Sub", height=35,
-            font=("Segoe UI", 13, "bold"), command=self.open_subtitle_tab_output_folder,
-            border_width=0
-        )
-        self.open_sub_output_folder_button.grid(row=0, column=1, padx=(3, 0), pady=0, sticky="ew")
-
-    def _create_subtitle_output_config_section(self, parent_frame, card_bg_color):
-        """
-        Create output configuration section for Subtitle tab.
-        
-        Args:
-            parent_frame: Parent frame to add section to
-            card_bg_color: Background color tuple for the card frame
-        """
-        out_frame = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-        out_frame.pack(fill="x", padx=10, pady=(2, 2))
-
-        ctk.CTkLabel(out_frame, text="📁 Thư mục lưu Sub/Video Gộp:", font=("Poppins", 13)).pack(anchor="w", padx=10, pady=(5,2))
-        
-        self.output_display_label = ctk.CTkLabel(out_frame, textvariable=self.output_path_var, anchor="w", wraplength=300, font=("Segoe UI", 10), text_color=("gray30", "gray70"))
-        self.output_display_label.pack(fill="x", padx=10, pady=(0, 3))
-        
-        buttons_container_frame = ctk.CTkFrame(out_frame, fg_color="transparent")
-        buttons_container_frame.pack(fill="x", padx=10, pady=(5,10))
-        buttons_container_frame.grid_columnconfigure((0, 1), weight=1)
-
-        self.choose_output_dir_button = ctk.CTkButton(
-            buttons_container_frame, text="Chọn Output", height=35,
-            font=("Poppins", 12), command=self.choose_output_dir
-        )
-        self.choose_output_dir_button.grid(row=0, column=0, padx=(0, 5), sticky="ew")
-
-        self.branding_settings_button_sub_tab = ctk.CTkButton(
-            buttons_container_frame, text="🖼 Logo/Intro", height=35,
-            font=("Poppins", 12), command=self.open_branding_settings_window
-        )
-        self.branding_settings_button_sub_tab.grid(row=0, column=1, padx=(5, 0), sticky="ew")
-
-        if hasattr(self, 'output_path_var') and hasattr(self, 'output_display_label'):
-            self.output_path_var.trace_add("write", lambda *a: self.output_display_label.configure(text=self.output_path_var.get() or "Chưa chọn"))
-            self.output_display_label.configure(text=self.output_path_var.get() or "Chưa chọn")
-
-    def _create_subtitle_whisper_config_section(self, parent_frame, card_bg_color):
-        """
-        Create Whisper configuration section for Subtitle tab.
-        
-        Args:
-            parent_frame: Parent frame to add section to
-            card_bg_color: Background color tuple for the card frame
-        """
-        whisper_config_frame = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-        whisper_config_frame.pack(fill="x", padx=10, pady=2)
-        
-        title_cuda_frame = ctk.CTkFrame(whisper_config_frame, fg_color="transparent")
-        title_cuda_frame.pack(fill="x", padx=10, pady=(5, 5))
-        title_cuda_frame.grid_columnconfigure(0, weight=0); title_cuda_frame.grid_columnconfigure(1, weight=1)
-        
-        ctk.CTkLabel(title_cuda_frame, text="⚙️ Whisper", font=("Poppins", 13, "bold")).grid(row=0, column=0, sticky="w")
-        if not hasattr(self, 'cuda_status_label') or self.cuda_status_label is None:
-             self.cuda_status_label = ctk.CTkLabel(title_cuda_frame, text="CUDA: Đang kiểm tra...", font=("Poppins", 11), text_color="gray")
-        elif self.cuda_status_label.master != title_cuda_frame: self.cuda_status_label.master = title_cuda_frame
-        self.cuda_status_label.grid(row=0, column=1, sticky="e", padx=(0, 5))
-        
-        whisper_options_grid = ctk.CTkFrame(whisper_config_frame, fg_color="transparent")
-        whisper_options_grid.pack(fill="x", padx=10, pady=(0, 10))
-        whisper_options_grid.grid_columnconfigure(1, weight=1); whisper_options_grid.grid_columnconfigure(3, weight=1)
-        
-        ctk.CTkLabel(whisper_options_grid, text="Model:", font=("Poppins", 12), anchor='w').grid(row=0, column=0, padx=(0,5), pady=(0,5), sticky="w")
-        model_menu = ctk.CTkOptionMenu(whisper_options_grid, variable=self.model_var, values=["tiny", "base", "small", "medium", "large", "large-v2", "large-v3"])
-        model_menu.grid(row=0, column=1, columnspan=3, padx=(0,0), pady=(0,5), sticky="ew")
-        
-        ctk.CTkLabel(whisper_options_grid, text="Ngôn ngữ:", font=("Poppins", 12), anchor='w').grid(row=1, column=0, padx=(0,5), pady=(5,0), sticky="w")
-        lang_menu = ctk.CTkOptionMenu(whisper_options_grid, variable=self.source_lang_var, values=["auto", "en", "vi", "ja", "zh", "ko", "fr", "de", "es", "it", "th", "ru", "pt", "hi"])
-        lang_menu.grid(row=1, column=1, padx=(0,10), pady=(5,0), sticky="ew")
-        
-        ctk.CTkLabel(whisper_options_grid, text="Định dạng:", font=("Poppins", 12), anchor='w').grid(row=1, column=2, padx=(5,5), pady=(5,0), sticky="w")
-        format_menu = ctk.CTkOptionMenu(whisper_options_grid, variable=self.format_var, values=["srt", "vtt", "txt"])
-        format_menu.grid(row=1, column=3, padx=(0,0), pady=(5,0), sticky="ew")
-
-        style_button_frame_sub_tab = ctk.CTkFrame(whisper_config_frame, fg_color="transparent")
-        style_button_frame_sub_tab.pack(fill="x", padx=10, pady=(10, 10))
-        self.subtitle_style_settings_button = ctk.CTkButton(
-            style_button_frame_sub_tab, text="🎨 Tùy chỉnh Kiểu Phụ đề (Hardsub)...",
-            height=35, font=("Poppins", 12), command=self.open_subtitle_style_settings_window
-        )
-        self.subtitle_style_settings_button.pack(fill="x", expand=True)
-
-    def _create_subtitle_translation_config_section(self, parent_frame, card_bg_color, special_action_button_color, special_action_hover_color):
-        """
-        Create translation configuration section for Subtitle tab.
-        
-        Args:
-            parent_frame: Parent frame to add section to
-            card_bg_color: Background color tuple
-            special_action_button_color: Color for special buttons
-            special_action_hover_color: Hover color for special buttons
-        """
-        translate_frame = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-        translate_frame.pack(fill="x", padx=10, pady=(0, 2))
-        
-        header_translate_frame = ctk.CTkFrame(translate_frame, fg_color="transparent")
-        header_translate_frame.pack(fill="x", padx=10, pady=(5, 5))
-        header_translate_frame.grid_columnconfigure(0, weight=1); header_translate_frame.grid_columnconfigure(1, weight=0)
-        
-        ctk.CTkLabel(header_translate_frame, text="🌐 Dịch Phụ Đề", font=("Poppins", 13, "bold"), anchor="w").grid(row=0, column=0, sticky="w")
-        if not hasattr(self, 'bilingual_checkbox'): self.bilingual_checkbox = ctk.CTkCheckBox(header_translate_frame, text="Tạo phụ đề song ngữ", variable=self.bilingual_var, checkbox_height=20, checkbox_width=20, font=("Poppins", 12))
-        else: self.bilingual_checkbox.master = header_translate_frame; self.bilingual_checkbox.configure(text="Tạo phụ đề song ngữ", variable=self.bilingual_var, checkbox_height=20, checkbox_width=20, font=("Poppins", 12))
-        self.bilingual_checkbox.grid(row=0, column=1, sticky="e", padx=(5, 0))
-        
-        engine_frame = ctk.CTkFrame(translate_frame, fg_color="transparent")
-        engine_frame.pack(fill="x", padx=10, pady=(0, 5))
-        engine_frame.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(engine_frame, text="Dịch bằng:", font=("Poppins", 12), anchor='w').grid(row=0, column=0, padx=(0,5), sticky="w")
-        
-        engine_options = ["Không dịch"]
-        if HAS_GOOGLE_CLOUD_TRANSLATE: engine_options.append("Google Cloud API (Paid)")
-        if HAS_OPENAI: engine_options.append("ChatGPT API (Paid)")
-        if self.translation_engine_var.get() not in engine_options: self.translation_engine_var.set("Không dịch")
-        
-        self.engine_menu = ctk.CTkOptionMenu(engine_frame, variable=self.translation_engine_var, values=engine_options, command=self.on_engine_change)
-        self.engine_menu.grid(row=0, column=1, sticky="ew")
-        
-        self.target_lang_frame = ctk.CTkFrame(translate_frame, fg_color="transparent")
-        self.target_lang_frame.pack(fill="x", padx=10, pady=0)
-        self.target_lang_frame.grid_columnconfigure(1, weight=1)
-        
-        ctk.CTkLabel(self.target_lang_frame, text="Dịch sang:", font=("Poppins", 12), anchor='w').grid(row=0, column=0, padx=(0,5), pady=(5,5), sticky="w")
-        if not hasattr(self, 'target_lang_menu'): self.target_lang_menu = ctk.CTkOptionMenu(self.target_lang_frame, variable=self.target_lang_var, values=["vi", "en", "ja", "zh-cn", "fr", "ko", "de", "es"])
-        else: self.target_lang_menu.master = self.target_lang_frame; self.target_lang_menu.configure(variable=self.target_lang_var, values=["vi", "en", "ja", "zh-cn", "fr", "ko", "de", "es"])
-        self.target_lang_menu.grid(row=0, column=1, padx=(0,10), pady=(5,5), sticky="ew")
-        
-        api_button_height = self.engine_menu.cget("height")
-        if not hasattr(self, 'api_settings_button_translate_tab'): self.api_settings_button_translate_tab = ctk.CTkButton(self.target_lang_frame, text="🔑 API Keys...", font=("Poppins", 11), height=api_button_height, width=120, command=self.open_api_settings_window, fg_color=special_action_button_color, hover_color=special_action_hover_color)
-        else: self.api_settings_button_translate_tab.master = self.target_lang_frame; self.api_settings_button_translate_tab.configure(text="🔑 API Keys...", font=("Poppins", 11), height=api_button_height, width=120, command=self.open_api_settings_window, fg_color=special_action_button_color, hover_color=special_action_hover_color)
-        self.api_settings_button_translate_tab.grid(row=0, column=2, padx=(0,0), pady=(5,5), sticky="e")
-        
-        self.openai_style_frame = ctk.CTkFrame(translate_frame, fg_color="transparent")
-        self.openai_style_frame.grid_columnconfigure(1, weight=1)
-        self.openai_style_label = ctk.CTkLabel(self.openai_style_frame, text="Phong cách (GPT):", font=("Poppins", 12), anchor='w')
-        self.openai_style_label.grid(row=0, column=0, padx=(0,5), pady=(5,5), sticky="w")
-        self.openai_style_menu = ctk.CTkOptionMenu(self.openai_style_frame, variable=self.openai_translation_style_var, values=self.OPENAI_TRANSLATION_STYLES)
-        self.openai_style_menu.grid(row=0, column=1, columnspan=2, padx=0, pady=(5,5), sticky="ew")
-
-    def _create_subtitle_merge_options_section(self, parent_frame, card_bg_color):
-        """
-        Create merge options section for Subtitle tab.
-        
-        Args:
-            parent_frame: Parent frame to add section to
-            card_bg_color: Background color tuple
-        """
-        self.merge_and_pause_frame_ref = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-        self.merge_and_pause_frame_ref.pack(fill="x", padx=10, pady=(0, 2))
-
-        ctk.CTkLabel(self.merge_and_pause_frame_ref, text="🎬 Gộp Sub & Tùy chọn", font=("Poppins", 13, "bold")).pack(pady=(5,5), padx=10, anchor="w")
-        self.merge_sub_segmented_button_ref = ctk.CTkSegmentedButton(self.merge_and_pause_frame_ref, values=["Không gộp", "Hard-sub", "Soft-sub"], variable=self.merge_sub_var, font=("Poppins", 12), corner_radius=8)
-        self.merge_sub_segmented_button_ref.pack(fill="x", padx=10, pady=(0, 10))
-        
-        self.manual_merge_mode_checkbox = ctk.CTkCheckBox(self.merge_and_pause_frame_ref, text="🛠 Ghép Sub Thủ Công (Bỏ qua Whisper)", variable=self.manual_merge_mode_var, font=("Poppins", 12), checkbox_height=20, checkbox_width=20)
-        self.manual_merge_mode_checkbox.pack(anchor="w", padx=10, pady=(2, 2))
-        self.auto_add_manual_task_checkbox = ctk.CTkCheckBox(self.merge_and_pause_frame_ref, text="🔄 Tự động thêm vào hàng chờ (TC)", variable=self.auto_add_manual_sub_task_var, font=("Poppins", 12), checkbox_height=20, checkbox_width=20)
-        
-        self.save_in_media_folder_checkbox = ctk.CTkCheckBox(
-            self.merge_and_pause_frame_ref,
-            text="Lưu vào thư mục của media (TC)",
-            variable=self.save_in_media_folder_var,
-            font=("Poppins", 12),
-            checkbox_height=20,
-            checkbox_width=20
-        )
-        self.optimize_whisper_tts_voice_checkbox = ctk.CTkCheckBox(self.merge_and_pause_frame_ref, text="🎤 Tối ưu giọng đọc Whisper", variable=self.optimize_whisper_tts_voice_var, font=("Poppins", 12), checkbox_height=20, checkbox_width=20, command=self._on_toggle_optimize_whisper_tts_voice)
-        self.optimize_whisper_tts_voice_checkbox.pack(anchor="w", padx=10, pady=(2, 2))
-        self.auto_format_srt_frame = ctk.CTkFrame(self.merge_and_pause_frame_ref, fg_color="transparent")
-        self.auto_format_srt_frame.pack(fill="x", padx=10, pady=(0, 2))
-        self.chk_auto_format_srt = ctk.CTkCheckBox(self.auto_format_srt_frame, text="🔄 Tự động định dạng Text sang SRT", variable=self.auto_format_plain_text_to_srt_var, font=("Poppins", 12), checkbox_height=20, checkbox_width=20)
-        self.chk_auto_format_srt.pack(anchor="w", padx=0, pady=0)
-                
-        self.sub_pause_media_options_frame = ctk.CTkFrame(self.merge_and_pause_frame_ref, fg_color="transparent")
-        self.sub_pause_media_options_frame.grid_columnconfigure((0, 1), weight=1)
-
-        self.sub_pause_select_folder_button = ctk.CTkButton(self.sub_pause_media_options_frame, text="🖼 Thư mục Ảnh...", font=("Poppins", 12), height=30, command=self._sub_pause_handle_select_folder)
-        self.sub_pause_select_folder_button.grid(row=0, column=0, padx=(0, 5), pady=2, sticky="ew")
-
-        self.sub_pause_select_media_button = ctk.CTkButton(self.sub_pause_media_options_frame, text="🎬 Chọn Video/Ảnh...", font=("Poppins", 12), height=30, command=self._sub_pause_handle_select_media)
-        self.sub_pause_select_media_button.grid(row=0, column=1, padx=(5, 0), pady=2, sticky="ew")
-
-        self.sub_pause_selected_media_info_label = ctk.CTkLabel(self.sub_pause_media_options_frame, text="", font=("Segoe UI", 10), text_color="gray", wraplength=300)
-        self.sub_pause_selected_media_info_label.grid(row=1, column=0, columnspan=2, padx=0, pady=(2, 5), sticky="ew")
-        
-        self.pause_edit_checkbox = ctk.CTkCheckBox(self.merge_and_pause_frame_ref, text="🔨 Dừng lại để chỉnh sửa Sub trước khi Gộp", variable=self.pause_for_edit_var, font=("Poppins", 12), checkbox_height=20, checkbox_width=20)
-        self.pause_edit_checkbox.pack(anchor="w", padx=10, pady=(2, 2)) 
-        self.continue_merge_button = ctk.CTkButton(self.merge_and_pause_frame_ref, text="▶ Tiếp tục Gộp Sub", height=35, font=("Poppins", 13, "bold"), command=self.resume_paused_task, state=ctk.DISABLED, fg_color="teal", hover_color="darkcyan")
-        self.continue_merge_button.pack(fill="x", padx=10, pady=(2, 2))
-
-    def _create_subtitle_split_config_section(self, parent_frame, card_bg_color):
-        """
-        Create split configuration section for Subtitle tab.
-        
-        Args:
-            parent_frame: Parent frame to add section to
-            card_bg_color: Background color tuple
-        """
-        split_frame = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-        split_frame.pack(fill="x", padx=10, pady=(0, 10))
-        split_row = ctk.CTkFrame(split_frame, fg_color="transparent")
-        split_row.pack(fill="x", padx=10, pady=(5, 10))
-        self.enable_split_checkbox_ref = ctk.CTkCheckBox(split_row, text="Chia dòng:", variable=self.enable_split_var, checkbox_height=20, checkbox_width=20, font=("Poppins", 12))
-        self.enable_split_checkbox_ref.grid(row=0, column=0, sticky="w", padx=(0, 10))
-        ctk.CTkLabel(split_row, text="Ký tự:", font=("Poppins", 11)).grid(row=0, column=1)
-        self.max_chars_entry_ref = ctk.CTkEntry(split_row, textvariable=self.max_chars_var, width=40)
-        self.max_chars_entry_ref.grid(row=0, column=2, padx=(2, 8))
-        ctk.CTkLabel(split_row, text="Số dòng:", font=("Poppins", 11)).grid(row=0, column=3)
-        self.max_lines_entry_ref = ctk.CTkEntry(split_row, textvariable=self.max_lines_var, width=40)
-        self.max_lines_entry_ref.grid(row=0, column=4, padx=(2, 0))
-        split_mode_frame = ctk.CTkFrame(split_frame, fg_color="transparent")
-        split_mode_frame.pack(fill="x", padx=10, pady=(0, 10))
-        split_mode_frame.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(split_mode_frame, text="Cách chia:", font=("Poppins", 11)).grid(row=0, column=0, padx=(0, 10), sticky="w")
-        split_mode_options = ["sentence", "char"]
-        if HAS_UNDERTHESEA: split_mode_options.insert(0, "underthesea (Tiếng Việt)")
-        self.split_mode_menu = ctk.CTkOptionMenu(split_mode_frame, variable=self.split_mode_var, values=split_mode_options)
-        self.split_mode_menu.grid(row=0, column=1, sticky="ew")
-        ctk.CTkLabel(split_mode_frame, text="Ký tự/giây (Timing):", font=("Poppins", 11)).grid(row=1, column=0, padx=(0, 10), pady=(5,0), sticky="w")
-        self.sub_cps_entry = ctk.CTkEntry(split_mode_frame, textvariable=self.sub_cps_for_timing_var, width=80)
-        self.sub_cps_entry.grid(row=1, column=1, pady=(5,0), sticky="w")
-        block_merge_options_frame = ctk.CTkFrame(split_frame, fg_color="transparent")
-        block_merge_options_frame.pack(fill="x", padx=10, pady=(5, 5))
-        block_merge_options_frame.grid_columnconfigure(1, weight=1, minsize=50)
-        block_merge_options_frame.grid_columnconfigure(3, weight=1, minsize=50)
-        self.enable_block_merging_checkbox = ctk.CTkCheckBox(block_merge_options_frame, text="Bật gộp khối tự động", variable=self.enable_block_merging_var, font=("Poppins", 12), checkbox_height=20, checkbox_width=20, command=self._toggle_block_merge_options_state)
-        self.enable_block_merging_checkbox.grid(row=0, column=0, columnspan=4, sticky="w", padx=0, pady=(0, 5))
-        ctk.CTkLabel(block_merge_options_frame, text="TG nghỉ (ms):", font=("Poppins", 10)).grid(row=1, column=0, sticky="w", padx=(0,2), pady=(0,5))
-        self.merge_time_gap_entry = ctk.CTkEntry(block_merge_options_frame, textvariable=self.merge_max_time_gap_var, width=50)
-        self.merge_time_gap_entry.grid(row=1, column=1, sticky="ew", padx=(0,5), pady=(0,5))
-        ctk.CTkLabel(block_merge_options_frame, text="Độ dài khối max (ký tự):", font=("Poppins", 10)).grid(row=1, column=2, sticky="w", padx=(5,2), pady=(0,5))
-        self.merge_max_len_entry = ctk.CTkEntry(block_merge_options_frame, textvariable=self.merge_curr_max_len_normal_var, width=50)
-        self.merge_max_len_entry.grid(row=1, column=3, sticky="ew", padx=(0,0), pady=(0,5))
-
-    def _create_subtitle_right_panel(self, main_frame, panel_bg_color, card_bg_color, textbox_bg_color, special_action_button_color, special_action_hover_color):
-        """
-        Create right panel for Subtitle tab (queue and editor).
-        
-        Args:
-            main_frame: Main frame containing the panel
-            panel_bg_color: Background color for panel
-            card_bg_color: Background color for card
-            textbox_bg_color: Background color for textbox
-            special_action_button_color: Color for special buttons
-            special_action_hover_color: Hover color for special buttons
-        """
-        self.right_panel_sub = ctk.CTkFrame(main_frame, fg_color=panel_bg_color, corner_radius=12)
-        self.right_panel_sub.grid(row=0, column=1, pady=0, sticky="nsew")
-
-        self.manual_queue_section = ctk.CTkScrollableFrame(self.right_panel_sub, label_text="📋 Hàng chờ Ghép Thủ Công", label_font=("Poppins", 14, "bold"), height=150)
-        self.queue_section = ctk.CTkScrollableFrame(self.right_panel_sub, label_text="📋 Hàng chờ (Sub Tự động)", label_font=("Poppins", 14, "bold"), height=150)
-        self.queue_section.pack(fill="x", padx=10, pady=(10, 5))
-
-        self.sub_edit_frame = ctk.CTkFrame(self.right_panel_sub, fg_color="transparent")
-        self.sub_edit_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        self.sub_edit_frame.grid_rowconfigure(1, weight=1)
-        self.sub_edit_frame.grid_columnconfigure(0, weight=1)
-
-        sub_header = ctk.CTkFrame(self.sub_edit_frame, fg_color="transparent")
-        sub_header.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        ctk.CTkLabel(sub_header, text="📝 Nội dung phụ đề:", font=("Poppins", 15, "bold")).pack(side="left", padx=(0,10))
-
-        buttons_container_sub_tab = ctk.CTkFrame(sub_header, fg_color=card_bg_color, corner_radius=6) 
-        buttons_container_sub_tab.pack(side="right", fill="x", expand=True, padx=(5,0))
-
-        num_sub_header_buttons = 7
-        for i in range(num_sub_header_buttons):
-            buttons_container_sub_tab.grid_columnconfigure(i, weight=1)
-
-        button_height_sub = 28
-        button_font_style_sub = ("Poppins", 11)
-
-        self.ai_edit_button_sub_tab = ctk.CTkButton(
-            buttons_container_sub_tab, text="✨ Biên tập (AI)", height=button_height_sub, font=button_font_style_sub,
-            command=lambda: self._show_ai_script_editing_popup(self.subtitle_textbox, "subtitle"),
-            fg_color=special_action_button_color, hover_color=special_action_hover_color
-        )
-        self.ai_edit_button_sub_tab.grid(row=0, column=0, padx=2, pady=2, sticky="ew")
-
-        self.dalle_button_sub_tab = ctk.CTkButton(
-            buttons_container_sub_tab, text="🎨 Tạo Ảnh AI", height=button_height_sub, font=button_font_style_sub,
-            command=self._show_dalle_image_generation_popup,
-            fg_color=special_action_button_color, hover_color=special_action_hover_color
-        )
-        self.dalle_button_sub_tab.grid(row=0, column=1, padx=2, pady=2, sticky="ew")
-
-        self.imagen_button_sub_tab = ctk.CTkButton(
-            buttons_container_sub_tab, text="🖼 Ảnh(Imagen)", height=button_height_sub, font=button_font_style_sub,
-            command=self.open_imagen_settings_window,
-            fg_color=special_action_button_color, hover_color=special_action_hover_color
-        )
-        self.imagen_button_sub_tab.grid(row=0, column=2, padx=2, pady=2, sticky="ew")
-
-        self.open_sub_button_ref = ctk.CTkButton(buttons_container_sub_tab, text="📂 Mở Sub...", height=button_height_sub, font=button_font_style_sub, command=self.load_old_sub_file)
-        self.open_sub_button_ref.grid(row=0, column=3, padx=2, pady=2, sticky="ew")
-
-        self.edit_sub_button_ref = ctk.CTkButton(buttons_container_sub_tab, text="📝 Sửa Sub", height=button_height_sub, font=button_font_style_sub, command=self.enable_sub_editing)
-        self.edit_sub_button_ref.grid(row=0, column=4, padx=2, pady=2, sticky="ew")
-
-        self.save_sub_button_ref = ctk.CTkButton(buttons_container_sub_tab, text="💾 Lưu Sub", height=button_height_sub, font=button_font_style_sub, command=self.save_edited_sub)
-        self.save_sub_button_ref.grid(row=0, column=5, padx=2, pady=2, sticky="ew")
-
-        self.sub_clear_content_button = ctk.CTkButton(
-            buttons_container_sub_tab, text="🗑 Xóa Nội dung", height=button_height_sub, font=button_font_style_sub, command=self.clear_subtitle_textbox_content
-        )
-        self.sub_clear_content_button.grid(row=0, column=6, padx=(2,0), pady=2, sticky="ew")
-
-        self.subtitle_textbox = ctk.CTkTextbox(
-            self.sub_edit_frame, font=("Segoe UI", 13), wrap="word", state="normal",
-            fg_color=textbox_bg_color, border_width=1
-        )
-        self.subtitle_textbox.grid(row=1, column=0, sticky="nsew", padx=0, pady=(2,0))
-        self.subtitle_textbox.bind("<Button-3>", textbox_right_click_menu)
-        if hasattr(self.subtitle_textbox, 'bind'): self.subtitle_textbox.bind("<<Paste>>", self.handle_paste_and_format_srt)
-        
-        self.subtitle_textbox.configure(state="normal")
-        self.subtitle_textbox.insert("1.0", self.subtitle_textbox_placeholder) 
-        
-        self.after(150, lambda: self.on_engine_change(self.translation_engine_var.get()))
-        self.after(150, self._toggle_block_merge_options_state)
-
-    def _create_subtitle_pacing_section(self, parent_frame, card_bg_color):
-        """
-        Create pacing configuration section for Subtitle tab.
-        
-        Args:
-            parent_frame: Parent frame to add section to
-            card_bg_color: Background color tuple
-        """
-        pacing_frame = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-        pacing_frame.pack(fill="x", padx=10, pady=(0, 10))
-
-        ctk.CTkLabel(pacing_frame, text="⏱ Nhịp điệu & Tốc độ Đọc (Nâng cao)", font=("Poppins", 13, "bold")).pack(pady=(5,5), padx=10, anchor="w")
-
-        pacing_grid = ctk.CTkFrame(pacing_frame, fg_color="transparent")
-        pacing_grid.pack(fill="x", padx=10, pady=(0, 10))
-        
-        pacing_grid.grid_columnconfigure(0, weight=0)
-        pacing_grid.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(pacing_grid, text="Nghỉ sau dấu phẩy (ms):", font=("Poppins", 11)).grid(row=0, column=0, sticky="w", pady=2, padx=(0, 5))
-        pause_medium_entry = ctk.CTkEntry(pacing_grid, textvariable=self.sub_pacing_pause_medium_ms_var)
-        pause_medium_entry.grid(row=0, column=1, sticky="ew", pady=2)
-        Tooltip(pause_medium_entry, "Thời gian nghỉ (mili giây) sau các dấu câu như , ; :")
-
-        ctk.CTkLabel(pacing_grid, text="Nghỉ sau dấu chấm (ms):", font=("Poppins", 11)).grid(row=1, column=0, sticky="w", pady=2, padx=(0, 5))
-        pause_period_entry = ctk.CTkEntry(pacing_grid, textvariable=self.sub_pacing_pause_period_ms_var)
-        pause_period_entry.grid(row=1, column=1, sticky="ew", pady=2)
-        Tooltip(pause_period_entry, "Thời gian nghỉ (mili giây) sau các dấu câu như . ...")
-
-        ctk.CTkLabel(pacing_grid, text="Nghỉ sau dấu hỏi (ms):", font=("Poppins", 11)).grid(row=2, column=0, sticky="w", pady=2, padx=(0, 5))
-        pause_question_entry = ctk.CTkEntry(pacing_grid, textvariable=self.sub_pacing_pause_question_ms_var)
-        pause_question_entry.grid(row=2, column=1, sticky="ew", pady=2)
-        Tooltip(pause_question_entry, "Thời gian nghỉ (mili giây) sau các dấu câu như ? !")
-
-        ctk.CTkLabel(pacing_grid, text="Ngưỡng câu dài (ký tự):", font=("Poppins", 11)).grid(row=3, column=0, sticky="w", pady=2, padx=(0, 5))
-        long_sentence_entry = ctk.CTkEntry(pacing_grid, textvariable=self.sub_pacing_long_sentence_threshold_var)
-        long_sentence_entry.grid(row=3, column=1, sticky="ew", pady=2)
-        Tooltip(long_sentence_entry, "Số ký tự để coi một câu là 'dài' và tăng tốc độ đọc.")
-
-        ctk.CTkLabel(pacing_grid, text="Hệ số tăng tốc:", font=("Poppins", 11)).grid(row=4, column=0, sticky="w", pady=2, padx=(0, 5))
-        fast_cps_multiplier_entry = ctk.CTkEntry(pacing_grid, textvariable=self.sub_pacing_fast_cps_multiplier_var)
-        fast_cps_multiplier_entry.grid(row=4, column=1, sticky="ew", pady=2)
-        Tooltip(fast_cps_multiplier_entry, "Hệ số nhân với tốc độ đọc (CPS) cho câu dài. Ví dụ: 1.1 = nhanh hơn 10%.")
-
 
 #===========================================================================================================================================================================
 # HÀM DỰNG GIAO DIỆN: TẠO CÁC THÀNH PHẦN UI CHO TAB 'THUYẾT MINH'
@@ -5706,8 +5209,8 @@ class SubtitleApp(ctk.CTk):
                             self.after(0, self._set_upload_tab_ui_state)
                         elif selected == "✍ AI Biên Tập" and hasattr(self, "_set_ai_edit_tab_ui_state"):
                             self.after(0, self._set_ai_edit_tab_ui_state)
-                        elif selected == "↓ Tải Xuống" and hasattr(self, "_set_download_tab_ui_state"):
-                            self.after(0, self._set_download_tab_ui_state)
+                        elif selected == "↓ Tải Xuống" and hasattr(self, 'download_view_frame') and hasattr(self.download_view_frame, 'set_download_ui_state'):
+                            self.after(0, lambda: self.download_view_frame.set_download_ui_state(downloading=False))
                     except Exception:
                         pass
 
@@ -7211,7 +6714,35 @@ class SubtitleApp(ctk.CTk):
                     break
 
                 genai.configure(api_key=gemini_api_key)
-                model = genai.GenerativeModel('gemini-1.5-pro-latest')
+                
+                # Tự động chọn model khả dụng
+                model = None
+                model_names_to_try = ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-pro', 'gemini-1.5-pro-latest']
+                
+                for model_name in model_names_to_try:
+                    try:
+                        # Chỉ tạo model, không test trước (sẽ test khi gọi API thực tế)
+                        model = genai.GenerativeModel(model_name)
+                        logging.debug(f"{log_prefix} Đã chọn model: {model_name}")
+                        break
+                    except Exception as model_e:
+                        logging.debug(f"{log_prefix} Model {model_name} không khả dụng: {model_e}")
+                        continue
+                
+                if not model:
+                    # Fallback: thử list_models và lấy model đầu tiên
+                    try:
+                        models = genai.list_models()
+                        if models:
+                            first_model_name = models[0].name.split('/')[-1] if '/' in models[0].name else models[0].name
+                            model = genai.GenerativeModel(first_model_name)
+                            logging.debug(f"{log_prefix} Dùng fallback model: {first_model_name}")
+                        else:
+                            raise Exception("Không tìm thấy model nào khả dụng.")
+                    except Exception as fallback_e:
+                        error_message = f"Không thể tìm thấy model Gemini khả dụng. Lỗi: {fallback_e}"
+                        logging.error(f"{log_prefix} {error_message}")
+                        break
 
                 # Xây dựng prompt
                 action_type = "tạo mới" if not script_content else "biên tập"
@@ -7711,8 +7242,9 @@ class SubtitleApp(ctk.CTk):
             base_name_from_script = os.path.splitext(os.path.basename(script_path))[0]
             logging.info(f"[AI Batch] Đang tạo 'thẻ tên' cho file: {base_name_from_script}")
 
+            subtitle_textbox = getattr(self.subtitle_view_frame, 'subtitle_textbox', None) if hasattr(self, 'subtitle_view_frame') else None
             self._trigger_gemini_script_processing_with_chain(
-                target_textbox_widget=self.subtitle_textbox,
+                target_textbox_widget=subtitle_textbox,
                 context="subtitle_batch",
                 user_prompt=self.ai_batch_current_prompt,
                 trigger_imagen_chain_flag=True,
@@ -8587,9 +8119,10 @@ class SubtitleApp(ctk.CTk):
                 final_script_for_display_sub_tab = original_plain_gpt_text # Cho textbox tab Subtitle
 
                 # Kiểm tra checkbox "Tự động định dạng Text sang SRT" của tab Subtitle
+                subtitle_textbox = getattr(self.subtitle_view_frame, 'subtitle_textbox', None) if hasattr(self, 'subtitle_view_frame') else None
                 auto_format_sub_on = (hasattr(self, 'auto_format_plain_text_to_srt_var') and
-                                      self.auto_format_plain_text_to_srt_var.get() and
-                                      target_textbox_widget == self.subtitle_textbox)
+                                     self.auto_format_plain_text_to_srt_var.get() and
+                                     target_textbox_widget == subtitle_textbox)
 
                 if auto_format_sub_on:
                     logging.info(f"{log_prefix} Checkbox 'AutoFormat SRT (Subtitle)' BẬT. Tạo SRT theo rule Subtitle.")
@@ -10253,7 +9786,34 @@ class SubtitleApp(ctk.CTk):
                 if not api_key: raise ValueError("Chưa cấu hình Gemini API Key.")
                 import google.generativeai as genai
                 genai.configure(api_key=api_key)
-                model = genai.GenerativeModel('gemini-1.5-pro-latest')
+                
+                # Tự động chọn model khả dụng
+                model = None
+                model_names_to_try = ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-pro', 'gemini-1.5-pro-latest']
+                
+                for model_name in model_names_to_try:
+                    try:
+                        # Chỉ tạo model, không test trước (sẽ test khi gọi API thực tế)
+                        model = genai.GenerativeModel(model_name)
+                        logging.debug(f"[Prompt Enhancement] Đã chọn model: {model_name}")
+                        break
+                    except Exception as model_e:
+                        logging.debug(f"[Prompt Enhancement] Model {model_name} không khả dụng: {model_e}")
+                        continue
+                
+                if not model:
+                    # Fallback: thử list_models và lấy model đầu tiên
+                    try:
+                        models = genai.list_models()
+                        if models:
+                            first_model_name = models[0].name.split('/')[-1] if '/' in models[0].name else models[0].name
+                            model = genai.GenerativeModel(first_model_name)
+                            logging.debug(f"[Prompt Enhancement] Dùng fallback model: {first_model_name}")
+                        else:
+                            raise ValueError("Không tìm thấy model nào khả dụng.")
+                    except Exception as fallback_e:
+                        raise ValueError(f"Không thể tìm thấy model Gemini khả dụng. Lỗi: {fallback_e}")
+                
                 response = model.generate_content(user_idea_prompt)
                 enhanced_prompt = response.text.strip().replace('"', '')
                 self._track_api_call(service_name="gemini_calls", units=1)
@@ -10810,8 +10370,8 @@ class SubtitleApp(ctk.CTk):
             logging.info(f"Sẽ sử dụng {len(self.download_urls_list)} link từ {source_of_urls} cho Tải & Sub.")
             # urls_to_process_initial sẽ được lấy từ self.download_urls_list ở dưới
             
-        elif hasattr(self, 'download_url_text') and self.download_url_text:
-            urls_text_from_box = self.download_url_text.get("1.0", "end-1c").strip()
+        elif hasattr(self, 'download_view_frame') and hasattr(self.download_view_frame, 'download_url_text') and self.download_view_frame.download_url_text:
+            urls_text_from_box = self.download_view_frame.download_url_text.get("1.0", "end-1c").strip()
             if urls_text_from_box:
                 source_of_urls = "ô nhập liệu textbox"
                 logging.info(f"Hàng chờ (self.download_urls_list) rỗng. Đọc link từ {source_of_urls} cho Tải & Sub.")
@@ -10885,15 +10445,15 @@ class SubtitleApp(ctk.CTk):
         self.current_download_url = None
         self.update_download_queue_display()
 
-        if hasattr(self, 'download_log_textbox') and self.download_log_textbox:
-             try:
-                 self.download_log_textbox.configure(state="normal")
-                 self.download_log_textbox.delete("1.0", "end")
-                 self.download_log_textbox.configure(state="disabled")
-             except Exception as e: logging.error(f"Lỗi khi xóa log download: {e}")
+        # Xóa log download sử dụng method của DownloadTab
+        if hasattr(self, 'download_view_frame') and hasattr(self.download_view_frame, 'clear_download_log'):
+            try:
+                self.download_view_frame.clear_download_log()
+            except Exception as e:
+                logging.error(f"Lỗi khi xóa log download: {e}")
         
         self.stop_event.clear()
-        self.set_download_ui_state(downloading=True)
+        self.download_view_frame.set_download_ui_state(downloading=True)
         self.download_view_frame.update_download_progress(0)
         
         self.download_view_frame.log_download(f"🚀 Bắt đầu quá trình TẢI & TỰ ĐỘNG SUB (Nguồn: {source_of_urls})...")
@@ -10912,7 +10472,7 @@ class SubtitleApp(ctk.CTk):
             if self.download_thread and self.download_thread.is_alive():
                  logging.warning("Luồng tải đang chạy!")
                  messagebox.showwarning("Đang xử lý", "Quá trình tải khác đang chạy, vui lòng đợi.", parent=self)
-                 self.set_download_ui_state(downloading=True)
+                 self.download_view_frame.set_download_ui_state(downloading=True)
                  return
             
             logging.info(f"CHUẨN BỊ TẠO THREAD (start_download_and_sub): self.download_urls_list lúc này = {self.download_urls_list}")
@@ -10922,7 +10482,7 @@ class SubtitleApp(ctk.CTk):
         except Exception as e:
             logging.error(f"Không thể bắt đầu luồng Tải & Auto Sub: {e}", exc_info=True)
             messagebox.showerror("Lỗi", f"Không thể bắt đầu quá trình Tải & Sub:\n{e}", parent=self)
-            self.set_download_ui_state(downloading=False)
+            self.download_view_frame.set_download_ui_state(downloading=False)
 
 
 # --- Hàm xử lý cho các nút chọn media mới khi tạm dừng ở tab Sub ---
@@ -11038,8 +10598,9 @@ class SubtitleApp(ctk.CTk):
 
             if not srt_path_for_timing_sub_ctx: 
                 textbox_content = ""
-                if hasattr(self, 'subtitle_textbox') and self.subtitle_textbox.winfo_exists(): # Kiểm tra trước khi get
-                    textbox_content = self.subtitle_textbox.get("1.0", "end-1c").strip()
+                subtitle_textbox = getattr(self.subtitle_view_frame, 'subtitle_textbox', None) if hasattr(self, 'subtitle_view_frame') else None
+                if subtitle_textbox and subtitle_textbox.winfo_exists(): # Kiểm tra trước khi get
+                    textbox_content = subtitle_textbox.get("1.0", "end-1c").strip()
                 # _ensure_subtitle_source_for_manual_operation đã xác nhận textbox_content hợp lệ nếu srt_path_for_timing_sub_ctx rỗng
                 try:
                     if not os.path.exists(self.temp_folder): os.makedirs(self.temp_folder, exist_ok=True) # [cite: 14]
@@ -11161,8 +10722,9 @@ class SubtitleApp(ctk.CTk):
 
         if not srt_path_for_timing_folder: # Nếu self.current_srt_path rỗng, nghĩa là phụ đề phải từ textbox
             textbox_content_folder = ""
-            if hasattr(self, 'subtitle_textbox') and self.subtitle_textbox.winfo_exists():
-                 textbox_content_folder = self.subtitle_textbox.get("1.0", "end-1c").strip()
+            subtitle_textbox = getattr(self.subtitle_view_frame, 'subtitle_textbox', None) if hasattr(self, 'subtitle_view_frame') else None
+            if subtitle_textbox and subtitle_textbox.winfo_exists():
+                 textbox_content_folder = subtitle_textbox.get("1.0", "end-1c").strip()
             # _ensure_subtitle_source_for_manual_operation đã xác nhận textbox_content_folder hợp lệ nếu đến được đây
             try:
                 if not os.path.exists(self.temp_folder): # [cite: 3]
@@ -11197,8 +10759,10 @@ class SubtitleApp(ctk.CTk):
         
         if hasattr(self, 'sub_pause_select_media_button'): self.sub_pause_select_media_button.configure(state="disabled") # [cite: 20]
         if hasattr(self, 'sub_pause_select_folder_button'): self.sub_pause_select_folder_button.configure(state="disabled") # [cite: 21]
-        if is_manual_mode and hasattr(self, 'sub_button'): # [cite: 21]
-            self.sub_button.configure(state="disabled") # [cite: 21]
+        if is_manual_mode:
+            sub_button = getattr(self.subtitle_view_frame, 'sub_button', None) if hasattr(self, 'subtitle_view_frame') else None
+            if sub_button and sub_button.winfo_exists():
+                sub_button.configure(state="disabled") # [cite: 21]
         elif not is_manual_mode and hasattr(self, 'continue_merge_button'): # [cite: 21]
             self.continue_merge_button.configure(state="disabled") # [cite: 21]
         
@@ -11230,8 +10794,9 @@ class SubtitleApp(ctk.CTk):
         
         # Kiểm tra nội dung textbox
         textbox_content = ""
-        if hasattr(self, 'subtitle_textbox') and self.subtitle_textbox.winfo_exists():
-            textbox_content = self.subtitle_textbox.get("1.0", "end-1c").strip()
+        subtitle_textbox = getattr(self.subtitle_view_frame, 'subtitle_textbox', None) if hasattr(self, 'subtitle_view_frame') else None
+        if subtitle_textbox and subtitle_textbox.winfo_exists():
+            textbox_content = subtitle_textbox.get("1.0", "end-1c").strip()
         
         # Sử dụng hàm _is_textbox_content_invalid_for_script để kiểm tra
         has_valid_textbox_content = textbox_content and not self._is_textbox_content_invalid_for_script(textbox_content)
@@ -11259,7 +10824,8 @@ class SubtitleApp(ctk.CTk):
             # Sau khi self.load_old_sub_file() chạy, self.current_srt_path có thể đã được cập nhật.
             # Kiểm tra lại xem việc tải có thành công không (bằng cách kiểm tra lại các biến)
             has_srt_file_after_load = self.current_srt_path and os.path.exists(self.current_srt_path)
-            textbox_content_after_load = self.subtitle_textbox.get("1.0", "end-1c").strip() # Lấy lại nội dung textbox
+            subtitle_textbox = getattr(self.subtitle_view_frame, 'subtitle_textbox', None) if hasattr(self, 'subtitle_view_frame') else None
+            textbox_content_after_load = subtitle_textbox.get("1.0", "end-1c").strip() if subtitle_textbox and subtitle_textbox.winfo_exists() else "" # Lấy lại nội dung textbox
             has_valid_textbox_after_load = textbox_content_after_load and not self._is_textbox_content_invalid_for_script(textbox_content_after_load)
 
             if has_srt_file_after_load or has_valid_textbox_after_load:
@@ -11839,10 +11405,10 @@ class SubtitleApp(ctk.CTk):
         is_manual_mode = self.manual_merge_mode_var.get()
         logging.info(f"Chế độ Ghép Sub Thủ Công được {'BẬT' if is_manual_mode else 'TẮT'}.")
 
-        add_button_auto = getattr(self, 'add_button', None)
-        add_button_manual = getattr(self, 'add_manual_task_button', None)
-        queue_auto = getattr(self, 'queue_section', None)
-        queue_manual = getattr(self, 'manual_queue_section', None)
+        add_button_auto = getattr(self.subtitle_view_frame, 'add_button', None) if hasattr(self, 'subtitle_view_frame') else None
+        add_button_manual = getattr(self.subtitle_view_frame, 'add_manual_task_button', None) if hasattr(self, 'subtitle_view_frame') else None
+        queue_auto = getattr(self.subtitle_view_frame, 'queue_section', None) if hasattr(self, 'subtitle_view_frame') else None
+        queue_manual = getattr(self.subtitle_view_frame, 'manual_queue_section', None) if hasattr(self, 'subtitle_view_frame') else None
 
         # LUÔN ẨN TẤT CẢ TRƯỚC
         if add_button_auto and add_button_auto.winfo_ismapped(): add_button_auto.pack_forget()
@@ -11857,11 +11423,17 @@ class SubtitleApp(ctk.CTk):
             for widget in queue_manual.winfo_children(): widget.destroy()
 
         # HIỂN THỊ LẠI CÁC THÀNH PHẦN ĐÚNG
+        sub_and_dub_button = getattr(self.subtitle_view_frame, 'sub_and_dub_button', None) if hasattr(self, 'subtitle_view_frame') else None
+        btn_row_frame = sub_and_dub_button.master if sub_and_dub_button else None
+        
         if is_manual_mode:
-            if add_button_manual:
-                add_button_manual.pack(in_=self.sub_and_dub_button.master, side="left", expand=True, fill="x", padx=(3, 0))
+            if add_button_manual and btn_row_frame:
+                add_button_manual.pack(in_=btn_row_frame, side="left", expand=True, fill="x", padx=(2, 0))
             if queue_manual:
-                queue_manual.pack(in_=self.right_panel_sub, fill="x", padx=10, pady=(10, 5), before=self.sub_edit_frame)
+                right_panel_sub = getattr(self.subtitle_view_frame, 'right_panel_sub', None) if hasattr(self, 'subtitle_view_frame') else None
+                sub_edit_frame = getattr(self.subtitle_view_frame, 'sub_edit_frame', None) if hasattr(self, 'subtitle_view_frame') else None
+                if right_panel_sub and sub_edit_frame:
+                    queue_manual.pack(in_=right_panel_sub, fill="x", padx=10, pady=(10, 5), before=sub_edit_frame)
                 # KIỂM TRA VÀ HIỂN THỊ PLACEHOLDER THỦ CÔNG
                 if not self.manual_sub_queue:
                     placeholder_text = (
@@ -11873,10 +11445,13 @@ class SubtitleApp(ctk.CTk):
                     )
                     ctk.CTkLabel(queue_manual, text=placeholder_text, text_color="gray", justify="left").pack(pady=20, padx=10)
         else: # Chế độ Tự động
-            if add_button_auto:
-                add_button_auto.pack(in_=self.sub_and_dub_button.master, side="left", expand=True, fill="x", padx=(3, 0))
+            if add_button_auto and btn_row_frame:
+                add_button_auto.pack(in_=btn_row_frame, side="left", expand=True, fill="x", padx=(2, 0))
             if queue_auto:
-                queue_auto.pack(in_=self.right_panel_sub, fill="x", padx=10, pady=(10, 5), before=self.sub_edit_frame)
+                right_panel_sub = getattr(self.subtitle_view_frame, 'right_panel_sub', None) if hasattr(self, 'subtitle_view_frame') else None
+                sub_edit_frame = getattr(self.subtitle_view_frame, 'sub_edit_frame', None) if hasattr(self, 'subtitle_view_frame') else None
+                if right_panel_sub and sub_edit_frame:
+                    queue_auto.pack(in_=right_panel_sub, fill="x", padx=10, pady=(10, 5), before=sub_edit_frame)
                 # KIỂM TRA VÀ HIỂN THỊ PLACEHOLDER TỰ ĐỘNG
                 if not self.file_queue and not self.current_file:
                      ctk.CTkLabel(queue_auto, text="[Hàng chờ sub tự động trống]", font=("Segoe UI", 11), text_color="gray").pack(anchor="center", pady=20)
@@ -12082,8 +11657,9 @@ class SubtitleApp(ctk.CTk):
 
         # --- 1. Lấy và xác thực thông tin cơ bản --- (Giữ nguyên phần này)
         srt_content_to_merge = ""
-        if hasattr(self, 'subtitle_textbox') and self.subtitle_textbox.winfo_exists() and self.subtitle_textbox.get("1.0", "end-1c").strip():
-            srt_content_to_merge = self.subtitle_textbox.get("1.0", "end-1c").strip()
+        subtitle_textbox = getattr(self.subtitle_view_frame, 'subtitle_textbox', None) if hasattr(self, 'subtitle_view_frame') else None
+        if subtitle_textbox and subtitle_textbox.winfo_exists() and subtitle_textbox.get("1.0", "end-1c").strip():
+            srt_content_to_merge = subtitle_textbox.get("1.0", "end-1c").strip()
         
         if not srt_content_to_merge:
             messagebox.showwarning("Thiếu Subtitle", "Không có nội dung subtitle trong textbox để thực hiện ghép.", parent=self)
@@ -12176,7 +11752,9 @@ class SubtitleApp(ctk.CTk):
             logging.error(f"[ManualMergePrep] Lỗi nghiêm trọng trong quá trình chuẩn bị và lưu SRT: {e_save_srt_prep}", exc_info=True)
             messagebox.showerror("Lỗi Lưu Subtitle", f"Không thể tự động lưu nội dung subtitle.\nLỗi: {e_save_srt_prep}", parent=self)
             # Khôi phục UI (giữ nguyên)
-            if hasattr(self, 'sub_button') and self.sub_button.winfo_exists(): self.sub_button.configure(state=ctk.NORMAL, text="🔨 Bắt đầu Ghép Thủ Công")
+            sub_button = getattr(self.subtitle_view_frame, 'sub_button', None) if hasattr(self, 'subtitle_view_frame') else None
+            if sub_button and sub_button.winfo_exists():
+                sub_button.configure(state=ctk.NORMAL, text="🔨 Bắt đầu Ghép Thủ Công")
             if hasattr(self, 'manual_merge_mode_checkbox') and self.manual_merge_mode_checkbox.winfo_exists(): self.manual_merge_mode_checkbox.configure(state=ctk.NORMAL)
             if hasattr(self, 'sub_and_dub_button') and self.sub_and_dub_button.winfo_exists(): self.sub_and_dub_button.configure(state=ctk.NORMAL)
             if hasattr(self, 'stop_button') and self.stop_button.winfo_exists(): self.stop_button.configure(state=ctk.DISABLED)
@@ -12187,7 +11765,9 @@ class SubtitleApp(ctk.CTk):
 
         # --- 3. Vô hiệu hóa UI và Bắt đầu luồng xử lý ---
         # (Phần này giữ nguyên)
-        if hasattr(self, 'sub_button') and self.sub_button.winfo_exists(): self.sub_button.configure(state=ctk.DISABLED, text="⏳ Đang ghép...")
+        sub_button = getattr(self.subtitle_view_frame, 'sub_button', None) if hasattr(self, 'subtitle_view_frame') else None
+        if sub_button and sub_button.winfo_exists():
+            sub_button.configure(state=ctk.DISABLED, text="⏳ Đang ghép...")
         if hasattr(self, 'manual_merge_mode_checkbox') and self.manual_merge_mode_checkbox.winfo_exists(): self.manual_merge_mode_checkbox.configure(state=ctk.DISABLED)
         if hasattr(self, 'sub_and_dub_button') and self.sub_and_dub_button.winfo_exists(): self.sub_and_dub_button.configure(state=ctk.DISABLED)
         if hasattr(self, 'stop_button') and self.stop_button.winfo_exists(): self.stop_button.configure(state=ctk.NORMAL)
@@ -12287,8 +11867,9 @@ class SubtitleApp(ctk.CTk):
         srt_content_to_merge = ""
         source_of_srt_for_merge = ""
 
-        if hasattr(self, 'subtitle_textbox') and self.subtitle_textbox.get("1.0", "end-1c").strip():
-            srt_content_to_merge = self.subtitle_textbox.get("1.0", "end-1c").strip()
+        subtitle_textbox = getattr(self.subtitle_view_frame, 'subtitle_textbox', None) if hasattr(self, 'subtitle_view_frame') else None
+        if subtitle_textbox and subtitle_textbox.winfo_exists() and subtitle_textbox.get("1.0", "end-1c").strip():
+            srt_content_to_merge = subtitle_textbox.get("1.0", "end-1c").strip()
             source_of_srt_for_merge = "Textbox"
             # Nếu current_srt_path cũng tồn tại, có thể ưu tiên textbox vì nó có thể là bản đã sửa
             if self.current_srt_path and os.path.exists(self.current_srt_path):
@@ -12375,7 +11956,9 @@ class SubtitleApp(ctk.CTk):
 
         # --- 3. Thực hiện ghép trong luồng riêng ---
         # Vô hiệu hóa các nút quan trọng
-        self.sub_button.configure(state=ctk.DISABLED, text="⏳ Đang ghép...")
+        sub_button = getattr(self.subtitle_view_frame, 'sub_button', None) if hasattr(self, 'subtitle_view_frame') else None
+        if sub_button and sub_button.winfo_exists():
+            sub_button.configure(state=ctk.DISABLED, text="⏳ Đang ghép...")
         self.manual_merge_mode_checkbox.configure(state=ctk.DISABLED)
         if hasattr(self, 'stop_button') and self.stop_button.winfo_exists():
             self.stop_button.configure(state=ctk.NORMAL) # Cho phép dừng nếu quá trình ghép lâu
@@ -12570,7 +12153,9 @@ class SubtitleApp(ctk.CTk):
             
             # Reset UI
             if hasattr(self, 'manual_merge_mode_checkbox') and self.manual_merge_mode_checkbox.winfo_exists(): self.manual_merge_mode_checkbox.configure(state=ctk.NORMAL)
-            if hasattr(self, 'sub_button') and self.sub_button.winfo_exists(): self.sub_button.configure(text="🔨 Bắt đầu Ghép Thủ Công", state=ctk.NORMAL)
+            sub_button = getattr(self.subtitle_view_frame, 'sub_button', None) if hasattr(self, 'subtitle_view_frame') else None
+            if sub_button and sub_button.winfo_exists():
+                sub_button.configure(text="🔨 Bắt đầu Ghép Thủ Công", state=ctk.NORMAL)
             if hasattr(self, 'sub_and_dub_button') and self.sub_and_dub_button.winfo_exists(): self.sub_and_dub_button.configure(state=ctk.NORMAL)
             if hasattr(self, 'stop_button') and self.stop_button.winfo_exists(): self.stop_button.configure(state=ctk.DISABLED)
             
@@ -12593,8 +12178,9 @@ class SubtitleApp(ctk.CTk):
 
         if hasattr(self, 'manual_merge_mode_checkbox') and self.manual_merge_mode_checkbox.winfo_exists():
             self.manual_merge_mode_checkbox.configure(state=ctk.NORMAL)
-        if hasattr(self, 'sub_button') and self.sub_button.winfo_exists():
-             self.sub_button.configure(text="🔨 Bắt đầu Ghép Thủ Công", state=ctk.NORMAL)
+        sub_button = getattr(self.subtitle_view_frame, 'sub_button', None) if hasattr(self, 'subtitle_view_frame') else None
+        if sub_button and sub_button.winfo_exists():
+             sub_button.configure(text="🔨 Bắt đầu Ghép Thủ Công", state=ctk.NORMAL)
         
         can_reenable_sub_and_dub_button_now = True
 
@@ -12852,7 +12438,7 @@ class SubtitleApp(ctk.CTk):
           thay vì chỉ các chuỗi đường dẫn, giúp tương thích với chuỗi D-S-D.
         - Hỗ trợ hiển thị cả hàng chờ AI, hàng chờ Sub và tác vụ đơn lẻ.
         """
-        queue_widget = getattr(self, 'queue_section', None)
+        queue_widget = getattr(self.subtitle_view_frame, 'queue_section', None) if hasattr(self, 'subtitle_view_frame') else None
         if not queue_widget or not hasattr(queue_widget, 'winfo_exists') or not queue_widget.winfo_exists():
             return
 
@@ -13306,7 +12892,7 @@ class SubtitleApp(ctk.CTk):
         Cập nhật giao diện của hàng chờ ghép thủ công.
         ĐÃ SỬA: Màu chữ tự động tương thích với giao diện Sáng/Tối.
         """
-        queue_widget = getattr(self, 'manual_queue_section', None)
+        queue_widget = getattr(self.subtitle_view_frame, 'manual_queue_section', None) if hasattr(self, 'subtitle_view_frame') else None
         if not queue_widget or not queue_widget.winfo_exists():
             return
 
@@ -13396,14 +12982,16 @@ class SubtitleApp(ctk.CTk):
         subtitle_data = None
         subtitle_display_name = ""
 
-        textbox_content = self.subtitle_textbox.get("1.0", "end-1c").strip()
+        # Truy cập subtitle_textbox qua SubtitleTab
+        subtitle_textbox = getattr(self.subtitle_view_frame, 'subtitle_textbox', None) if hasattr(self, 'subtitle_view_frame') else None
+        textbox_content = subtitle_textbox.get("1.0", "end-1c").strip() if subtitle_textbox and subtitle_textbox.winfo_exists() else ""
         # Ưu tiên dùng file SRT nếu có
         if self.current_srt_path and os.path.exists(self.current_srt_path):
             subtitle_source_type = 'file'
             subtitle_data = self.current_srt_path
             subtitle_display_name = os.path.basename(self.current_srt_path)
         # Nếu không, dùng nội dung từ textbox
-        elif textbox_content and not self._is_textbox_content_invalid_for_script(textbox_content):
+        elif subtitle_textbox and subtitle_textbox.winfo_exists() and textbox_content and not self._is_textbox_content_invalid_for_script(textbox_content):
             subtitle_source_type = 'textbox'
             subtitle_data = textbox_content
             subtitle_display_name = "Kịch bản từ Textbox"
@@ -13485,8 +13073,9 @@ class SubtitleApp(ctk.CTk):
         self.manual_sub_original_media_source_path = None
 
         # 4. Reset UI để chuẩn bị cho tác vụ tiếp theo
-        self.subtitle_textbox.configure(state="normal")
-        self.subtitle_textbox.delete("1.0", "end")
+        if subtitle_textbox and subtitle_textbox.winfo_exists():
+            subtitle_textbox.configure(state="normal")
+            subtitle_textbox.delete("1.0", "end")
         self.current_srt_path = None
         self.sub_pause_selected_media_path = None
         if hasattr(self, 'sub_pause_selected_media_info_label'):
@@ -14075,7 +13664,9 @@ class SubtitleApp(ctk.CTk):
                     self.show_sub_in_textbox(content) 
                 # === KẾT THÚC LOGIC MỚI ===
 
-                self.subtitle_textbox.configure(state="normal")
+                subtitle_textbox = getattr(self.subtitle_view_frame, 'subtitle_textbox', None) if hasattr(self, 'subtitle_view_frame') else None
+                if subtitle_textbox and subtitle_textbox.winfo_exists():
+                    subtitle_textbox.configure(state="normal")
                 self.update_status(f"Đã mở file: {os.path.basename(path)}")
 
             except Exception as e:
@@ -14090,8 +13681,9 @@ class SubtitleApp(ctk.CTk):
     def enable_sub_editing(self):
         """ Cho phép chỉnh sửa ô textbox phụ đề """
         self.allow_edit_sub = True
-        if self.subtitle_textbox and self.subtitle_textbox.winfo_exists():
-            self.subtitle_textbox.configure(state="normal")
+        subtitle_textbox = getattr(self.subtitle_view_frame, 'subtitle_textbox', None) if hasattr(self, 'subtitle_view_frame') else None
+        if subtitle_textbox and subtitle_textbox.winfo_exists():
+            subtitle_textbox.configure(state="normal")
             logging.info("Đã bật chế độ chỉnh sửa phụ đề.")
 
 
@@ -14120,9 +13712,10 @@ class SubtitleApp(ctk.CTk):
 
         try:
             # 1. Bật state='normal' để lấy nội dung
-            if hasattr(self, 'subtitle_textbox') and self.subtitle_textbox:
-                self.subtitle_textbox.configure(state="normal")
-                new_text = self.subtitle_textbox.get("0.0", "end-1c") # Lấy tất cả text trừ dòng mới cuối cùng
+            subtitle_textbox = getattr(self.subtitle_view_frame, 'subtitle_textbox', None) if hasattr(self, 'subtitle_view_frame') else None
+            if subtitle_textbox and subtitle_textbox.winfo_exists():
+                subtitle_textbox.configure(state="normal")
+                new_text = subtitle_textbox.get("0.0", "end-1c") # Lấy tất cả text trừ dòng mới cuối cùng
             else:
                 logging.error("Textbox phụ đề không khả dụng để lấy nội dung.")
                 messagebox.showerror("Lỗi UI", "Không thể truy cập ô nội dung phụ đề.")
@@ -14132,8 +13725,8 @@ class SubtitleApp(ctk.CTk):
             if not new_text.strip():
                  messagebox.showwarning("Nội dung rỗng", "Không có nội dung để lưu.")
                  # Nếu không có nội dung và không cho phép sửa, thì disable lại
-                 if not self.allow_edit_sub:
-                      self.subtitle_textbox.configure(state="disabled")
+                 if not self.allow_edit_sub and subtitle_textbox:
+                      subtitle_textbox.configure(state="disabled")
                  return
 
             # 3. Lưu file
@@ -14143,7 +13736,8 @@ class SubtitleApp(ctk.CTk):
 
             # 4. Luôn tắt chế độ chỉnh sửa sau khi lưu thành công
             self.allow_edit_sub = False
-            self.subtitle_textbox.configure(state="disabled")
+            if subtitle_textbox and subtitle_textbox.winfo_exists():
+                subtitle_textbox.configure(state="disabled")
 
             # Nếu nội dung đã lưu là rỗng (sau khi strip), hiển thị lại placeholder
             if not new_text.strip():
@@ -14154,8 +13748,9 @@ class SubtitleApp(ctk.CTk):
             messagebox.showerror("Lỗi Lưu File", f"Không thể lưu file:\n{self.current_srt_path}\n\nLỗi: {e}")
             # Cố gắng disable lại textbox nếu có lỗi xảy ra và không cho phép sửa
             try:
-                 if hasattr(self, 'subtitle_textbox') and self.subtitle_textbox and not self.allow_edit_sub:
-                      self.subtitle_textbox.configure(state="disabled")
+                subtitle_textbox = getattr(self.subtitle_view_frame, 'subtitle_textbox', None) if hasattr(self, 'subtitle_view_frame') else None
+                if subtitle_textbox and subtitle_textbox.winfo_exists() and not self.allow_edit_sub:
+                    subtitle_textbox.configure(state="disabled")
             except Exception: pass # Bỏ qua lỗi phụ
 
 
@@ -14213,10 +13808,12 @@ class SubtitleApp(ctk.CTk):
         # --- KẾT THÚC THÊM LOGIC ---
 
         self._set_subtitle_tab_ui_state(True)
-        if hasattr(self, 'sub_button') and self.sub_button.winfo_exists():
+        # Truy cập sub_button qua SubtitleTab
+        sub_button = getattr(self.subtitle_view_frame, 'sub_button', None) if hasattr(self, 'subtitle_view_frame') else None
+        if sub_button and sub_button.winfo_exists():
             # Xác định text cho nút sub dựa trên manual_mode
             sub_button_text_current_mode = "🔨 Đang ghép thủ công..." if self.manual_merge_mode_var.get() else "⏳ Đang Sub..."
-            self.sub_button.configure(text=sub_button_text_current_mode)
+            sub_button.configure(text=sub_button_text_current_mode)
                 
         logging.info("Đang lưu cấu hình hiện tại trước khi bắt đầu tác vụ phụ đề (auto_sub_all)...") # Log rõ hơn
         self.save_current_config() # Lưu cả trạng thái shutdown_requested_by_task (nếu có) và các cài đặt khác
@@ -14274,7 +13871,7 @@ class SubtitleApp(ctk.CTk):
             self.dub_stop_event.clear()
             
             self._set_subtitle_tab_ui_state(False)
-            self.set_download_ui_state(downloading=False)
+            self.download_view_frame.set_download_ui_state(downloading=False)
             
             # Chỉ reset tab dubbing nếu app đã active
             try:
@@ -17163,9 +16760,10 @@ class SubtitleApp(ctk.CTk):
 
             self.after(1000, self.update_time_realtime)
 
-            if hasattr(self, 'sub_button') and self.sub_button and self.sub_button.winfo_exists():
+            sub_button = getattr(self.subtitle_view_frame, 'sub_button', None) if hasattr(self, 'subtitle_view_frame') else None
+            if sub_button and sub_button.winfo_exists():
                 try:
-                    self.sub_button.configure(state="disabled", text=f"Đang tải {target_model}...")
+                    sub_button.configure(state="disabled", text=f"Đang tải {target_model}...")
                 except Exception as e:
                     logging.warning(f"Không thể vô hiệu hóa nút Sub: {e}")
 
@@ -19973,24 +19571,26 @@ class SubtitleApp(ctk.CTk):
 # Hàm tiện ích UI Subtitle: Hiển thị nội dung phụ đề lên ô Textbox
     def show_sub_in_textbox(self, content):
         """ Cập nhật an toàn nội dung textbox phụ đề """
-        if not hasattr(self, 'subtitle_textbox') or not self.subtitle_textbox or not self.subtitle_textbox.winfo_exists():
+        subtitle_textbox = getattr(self.subtitle_view_frame, 'subtitle_textbox', None) if hasattr(self, 'subtitle_view_frame') else None
+        if not subtitle_textbox or not subtitle_textbox.winfo_exists():
             logging.warning("Widget textbox phụ đề không khả dụng để cập nhật.")
             return
         try:
             # BƯỚC 1: Luôn bật state='normal' để cho phép xóa và chèn
-            self.subtitle_textbox.configure(state="normal")
+            subtitle_textbox.configure(state="normal")
             # BƯỚC 2: Xóa nội dung cũ và chèn nội dung mới
-            self.subtitle_textbox.delete("0.0", "end")
+            subtitle_textbox.delete("0.0", "end")
 
             if content and content.strip(): # Nếu có nội dung thực sự
-                self.subtitle_textbox.insert("0.0", content)
+                subtitle_textbox.insert("0.0", content)
             else: # Nếu nội dung rỗng hoặc chỉ là khoảng trắng
                 placeholder = getattr(self, 'subtitle_textbox_placeholder', "[Nội dung phụ đề sẽ hiển thị ở đây...]")
-                self.subtitle_textbox.insert("0.0", placeholder)
+                subtitle_textbox.insert("0.0", placeholder)
 
             # BƯỚC 3: Nếu không cho phép sửa, đặt lại state='disabled'
             if not self.allow_edit_sub:
-                 self.subtitle_textbox.configure(state="disabled")
+                if subtitle_textbox and subtitle_textbox.winfo_exists():
+                    subtitle_textbox.configure(state="disabled")
             logging.debug("Đã cập nhật nội dung textbox phụ đề.")
         except Exception as e:
              logging.error(f"Lỗi cập nhật textbox phụ đề: {e}", exc_info=True)
@@ -21114,7 +20714,7 @@ class SubtitleApp(ctk.CTk):
             logging.info("Đã cập nhật các biến, đang lên lịch làm mới toàn bộ giao diện...")
 
             # Cập nhật cho Tab Download
-            self.after(50, lambda: self.set_download_ui_state(downloading=False))
+            self.after(50, lambda: self.download_view_frame.set_download_ui_state(downloading=False))
 
             # Cập nhật cho Tab Subtitle (hàm này sẽ tự gọi các hàm con của nó)
             self.after(100, lambda: self._set_subtitle_tab_ui_state(subbing_active=False))
@@ -21188,9 +20788,9 @@ class SubtitleApp(ctk.CTk):
             source_of_urls = "hàng chờ hiện tại (self.download_urls_list)"
             logging.info(f"Sẽ sử dụng {len(self.download_urls_list)} link từ {source_of_urls}.")
             # urls_to_process_initial sẽ được lấy từ self.download_urls_list ở dưới nếu cần
-        elif hasattr(self, 'download_url_text') and self.download_url_text:
+        elif hasattr(self, 'download_view_frame') and hasattr(self.download_view_frame, 'download_url_text') and self.download_view_frame.download_url_text:
             # Ưu tiên 2: Nếu self.download_urls_list rỗng, đọc từ textbox
-            urls_text_from_box = self.download_url_text.get("1.0", "end-1c").strip()
+            urls_text_from_box = self.download_view_frame.download_url_text.get("1.0", "end-1c").strip()
             if urls_text_from_box:
                 source_of_urls = "ô nhập liệu textbox"
                 logging.info(f"Hàng chờ (self.download_urls_list) rỗng. Đọc link từ {source_of_urls}.")
@@ -21263,15 +20863,15 @@ class SubtitleApp(ctk.CTk):
         self.current_download_url = None 
         self.update_download_queue_display() 
 
-        if hasattr(self, 'download_log_textbox') and self.download_log_textbox:
-             try:
-                 self.download_log_textbox.configure(state="normal")
-                 self.download_log_textbox.delete("1.0", "end")
-                 self.download_log_textbox.configure(state="disabled")
-             except Exception as e: logging.error(f"Lỗi xóa log download: {e}")
+        # Xóa log download sử dụng method của DownloadTab
+        if hasattr(self, 'download_view_frame') and hasattr(self.download_view_frame, 'clear_download_log'):
+            try:
+                self.download_view_frame.clear_download_log()
+            except Exception as e:
+                logging.error(f"Lỗi khi xóa log download: {e}")
 
         self.stop_event.clear()
-        self.set_download_ui_state(downloading=True)
+        self.download_view_frame.set_download_ui_state(downloading=True)
         self.download_view_frame.update_download_progress(0)
 
         self.download_view_frame.log_download(f"🚀 Bắt đầu quá trình CHỈ TẢI (Nguồn: {source_of_urls})...")
@@ -21292,7 +20892,7 @@ class SubtitleApp(ctk.CTk):
             if self.download_thread and self.download_thread.is_alive():
                  logging.warning("Thread tải đang chạy!")
                  messagebox.showwarning("Đang xử lý", "Quá trình tải khác đang chạy, vui lòng đợi.", parent=self)
-                 self.set_download_ui_state(downloading=True) 
+                 self.download_view_frame.set_download_ui_state(downloading=True) 
                  return
 
             logging.info(f"CHUẨN BỊ TẠO THREAD (start_download): self.download_urls_list lúc này = {self.download_urls_list}")
@@ -21303,7 +20903,7 @@ class SubtitleApp(ctk.CTk):
         except Exception as e:
             logging.error(f"Lỗi bắt đầu thread tải: {e}", exc_info=True)
             messagebox.showerror("Lỗi", f"Không thể bắt đầu quá trình tải:\n{e}", parent=self)
-            self.set_download_ui_state(downloading=False)
+            self.download_view_frame.set_download_ui_state(downloading=False)
 
 
 
@@ -21368,12 +20968,12 @@ class SubtitleApp(ctk.CTk):
                 self.download_view_frame.log_download("   -> Không tìm thấy tiến trình con đang chạy để dừng trực tiếp.")
             self.current_process = None
 
-            self.after(0, lambda: self.set_download_ui_state(downloading=False))
+            self.after(0, lambda: self.download_view_frame.set_download_ui_state(downloading=False))
             self.after(10, self.update_download_queue_display) 
             self.after(20, lambda: self.download_view_frame.update_download_progress(0))
         else:
             self.download_view_frame.log_download("\nℹ️ Không có tiến trình tải nào đang chạy để dừng.")
-            self.set_download_ui_state(downloading=False)
+            self.download_view_frame.set_download_ui_state(downloading=False)
             self.update_download_queue_display()
 
 
@@ -22132,7 +21732,7 @@ class SubtitleApp(ctk.CTk):
                 self.after(200, lambda text=final_status_text: self.update_status(text))
 
                 if not should_auto_sub: 
-                    self.after(250, lambda: self.set_download_ui_state(downloading=False))
+                    self.after(250, lambda: self.download_view_frame.set_download_ui_state(downloading=False))
 
                 if not self.stop_event.is_set() and not should_auto_sub:
                      self.after(250, lambda: self.download_view_frame.update_download_progress(0))
@@ -22176,7 +21776,7 @@ class SubtitleApp(ctk.CTk):
 
                 else:
                     # Trường hợp không có chuỗi tự động nào, chỉ dọn dẹp và kết thúc
-                    self.after(250, lambda: self.set_download_ui_state(downloading=False))
+                    self.after(250, lambda: self.download_view_frame.set_download_ui_state(downloading=False))
                     self.after(600, self._check_completion_and_shutdown) 
 
                 self.download_thread = None 
@@ -22184,7 +21784,7 @@ class SubtitleApp(ctk.CTk):
 
             except Exception as e_final_outer: 
                 logging.critical(f"[{thread_name}] RUN_DOWNLOAD: LỖI NGHIÊM TRỌNG không xử lý được: {e_final_outer}", exc_info=True)
-                self.after(0, lambda: self.set_download_ui_state(downloading=False)) 
+                self.after(0, lambda: self.download_view_frame.set_download_ui_state(downloading=False)) 
                 self.after(0, lambda: self.update_status(f"❌ Lỗi nghiêm trọng khi tải!"))
                 self.is_downloading = False 
                 self.current_download_url = None
@@ -22206,7 +21806,7 @@ class SubtitleApp(ctk.CTk):
 
         if not list_of_task_objects:
             logging.warning("Kích hoạt tự động sub nhưng không nhận được task object nào.")
-            self.set_download_ui_state(downloading=False)
+            self.download_view_frame.set_download_ui_state(downloading=False)
             self.update_status("⚠️ Không tìm thấy file video để tự động sub.")
             self._check_completion_and_shutdown()
             return
@@ -22229,7 +21829,7 @@ class SubtitleApp(ctk.CTk):
 
         if added_count == 0:
              logging.error("Không thể thêm file video đã tải hợp lệ nào vào hàng chờ sub.")
-             self.set_download_ui_state(downloading=False) # Đảm bảo UI Download reset
+             self.download_view_frame.set_download_ui_state(downloading=False) # Đảm bảo UI Download reset
              self.update_status("❌ Lỗi: Không thể thêm file video đã tải vào hàng chờ sub.")
              self._check_completion_and_shutdown()
              return
@@ -22256,23 +21856,23 @@ class SubtitleApp(ctk.CTk):
         # Các kiểm tra điều kiện (is_subbing, model loaded,...) giữ nguyên
         if self.is_subbing:
              messagebox.showwarning("Đang xử lý", "Đang xử lý tác vụ sub khác. Vui lòng đợi.", parent=self)
-             self.set_download_ui_state(downloading=False) # Reset UI Download
+             self.download_view_frame.set_download_ui_state(downloading=False) # Reset UI Download
              self._check_completion_and_shutdown()
              return
 
         if self.whisper_model is None and not self.is_loading_model:
              messagebox.showwarning("Model chưa sẵn sàng", "Whisper model chưa sẵn sàng để tự động sub. Vui lòng đợi model tải xong hoặc chọn lại model và bắt đầu sub thủ công trong tab 'Tạo Phụ Đề'.", parent=self)
-             self.set_download_ui_state(downloading=False) # Reset UI Download
+             self.download_view_frame.set_download_ui_state(downloading=False) # Reset UI Download
              return
         if self.is_loading_model:
              messagebox.showwarning("Model đang tải", "Whisper model đang được tải. Quá trình sub sẽ cần được bắt đầu thủ công sau khi model tải xong.", parent=self)
-             self.set_download_ui_state(downloading=False) # Reset UI Download
+             self.download_view_frame.set_download_ui_state(downloading=False) # Reset UI Download
              return
 
         logging.info("Gọi auto_sub_all() để bắt đầu xử lý hàng chờ sub.")
         self.auto_sub_all()
 
-        self.after(100, lambda: self.set_download_ui_state(downloading=False))
+        self.after(100, lambda: self.download_view_frame.set_download_ui_state(downloading=False))
         logging.info("Đã lên lịch reset UI của tab Download sau khi kích hoạt auto_sub_all.")
 
 
@@ -22283,7 +21883,7 @@ class SubtitleApp(ctk.CTk):
 # Hàm hỗ trợ UI Download: Cập nhật hiển thị hàng chờ tải xuống
     def update_download_queue_display(self):
         """ Cập nhật nội dung hiển thị trong CTkScrollableFrame của hàng chờ download (Thêm nút Lên/Xuống/Xóa). """
-        queue_widget = getattr(self, 'download_queue_section', None)
+        queue_widget = getattr(self.download_view_frame, 'download_queue_section', None) if hasattr(self, 'download_view_frame') else None
         if not queue_widget or not hasattr(queue_widget, 'winfo_exists') or not queue_widget.winfo_exists():
             return
 
@@ -22439,18 +22039,19 @@ class SubtitleApp(ctk.CTk):
         # Kích hoạt lại nút Sub
         is_app_active = self._is_app_fully_activated()
 
-        if hasattr(self, 'sub_button') and self.sub_button and self.sub_button.winfo_exists():
+        sub_button = getattr(self.subtitle_view_frame, 'sub_button', None) if hasattr(self, 'subtitle_view_frame') else None
+        if sub_button and sub_button.winfo_exists():
              try:
                  # Chỉ bật lại nút Sub nếu không có tác vụ subbing nào khác đang chạy
                  if not self.is_subbing: # <<< THÊM KIỂM TRA NÀY >>>
-                     current_state_sub_btn = "normal" if is_active else "disabled"
-                     button_text_sub_btn = "▶️ Bắt đầu SUB" if is_active else "🔒 Kích hoạt (Sub)"
+                     current_state_sub_btn = "normal" if is_app_active else "disabled"
+                     button_text_sub_btn = "▶️ Bắt đầu SUB" if is_app_active else "🔒 Kích hoạt (Sub)"
                      # Kiểm tra xem có ở manual mode không
                      if self.manual_merge_mode_var.get():
                          button_text_sub_btn = "🔨 Bắt đầu Ghép Thủ Công"
                          current_state_sub_btn = "normal" # Ở manual mode, nút này nên bật nếu không subbing
 
-                     self.sub_button.configure(state=current_state_sub_btn, text=button_text_sub_btn)
+                     sub_button.configure(state=current_state_sub_btn, text=button_text_sub_btn)
                      logging.debug(f"Đã khôi phục nút Sub về trạng thái: {current_state_sub_btn}")
                  else:
                      logging.debug("Nút Sub không được bật lại vì is_subbing vẫn True (có thể tác vụ sub khác đang chờ).")
@@ -22711,7 +22312,8 @@ class SubtitleApp(ctk.CTk):
 # Hàm hỗ trợ UI: Xử lý các link lấy được từ Sheet (thêm vào Textbox)
     def _process_sheet_links(self, links):
         """ Cập nhật ô Textbox với các link lấy được từ Sheet (chạy trên luồng chính) """
-        if not hasattr(self, 'download_url_text') or not self.download_url_text or not self.download_url_text.winfo_exists():
+        download_textbox = getattr(self.download_view_frame, 'download_url_text', None) if hasattr(self, 'download_view_frame') else None
+        if not download_textbox or not download_textbox.winfo_exists():
             logging.error("Textbox download_url_text không tồn tại để cập nhật link từ Sheet.")
             return
 
@@ -22726,7 +22328,7 @@ class SubtitleApp(ctk.CTk):
             return
 
         try:
-            current_content = self.download_url_text.get("1.0", "end-1c")
+            current_content = download_textbox.get("1.0", "end-1c")
             current_links = set(line.strip() for line in current_content.splitlines() if line.strip())
 
             added_links = []
@@ -22746,9 +22348,9 @@ class SubtitleApp(ctk.CTk):
                 final_text += "\n"
             final_text += new_links_str
 
-            self.download_url_text.delete("1.0", "end")
-            self.download_url_text.insert("1.0", final_text)
-            self.download_url_text.see("end")
+            download_textbox.delete("1.0", "end")
+            download_textbox.insert("1.0", final_text)
+            download_textbox.see("end")
 
             logging.info(f"Đã thêm {len(added_links)} link mới từ Sheet vào Textbox.")
             messagebox.showinfo("Thành công", f"Đã thêm thành công {len(added_links)} link mới từ Google Sheet.", parent=self)
@@ -23050,8 +22652,9 @@ class SubtitleApp(ctk.CTk):
 
         # Tắt chế độ sửa Textbox
         self.allow_edit_sub = False 
-        if hasattr(self, 'subtitle_textbox') and self.subtitle_textbox.winfo_exists():
-            self.subtitle_textbox.configure(state=ctk.DISABLED) 
+        subtitle_textbox = getattr(self.subtitle_view_frame, 'subtitle_textbox', None) if hasattr(self, 'subtitle_view_frame') else None
+        if subtitle_textbox and subtitle_textbox.winfo_exists():
+            subtitle_textbox.configure(state=ctk.DISABLED) 
 
         # Reset đường dẫn media đã chọn
         self.sub_pause_selected_media_path = None
@@ -23365,7 +22968,9 @@ class SubtitleApp(ctk.CTk):
                 if hasattr(self, 'sub_pause_select_media_button'): self.sub_pause_select_media_button.configure(state="normal")
                 if hasattr(self, 'sub_pause_select_folder_button'): self.sub_pause_select_folder_button.configure(state="normal")
                 if is_manual_mode_when_thread_starts:
-                    if hasattr(self, 'sub_button'): self.sub_button.configure(state="normal")
+                    sub_button = getattr(self.subtitle_view_frame, 'sub_button', None) if hasattr(self, 'subtitle_view_frame') else None
+                    if sub_button and sub_button.winfo_exists():
+                        sub_button.configure(state="normal")
                 else:
                     is_still_in_auto_pause_ui_state = (self.is_subbing and self.pause_for_edit_var.get() and not self.continue_merge_event.is_set())
                     if hasattr(self, 'continue_merge_button'):
@@ -25316,12 +24921,13 @@ class SubtitleApp(ctk.CTk):
         Được gọi sau khi dán hoặc bởi các hành động khác.
         """
         # Chỉ thực hiện nếu checkbox được tick và textbox tồn tại
+        subtitle_textbox = getattr(self.subtitle_view_frame, 'subtitle_textbox', None) if hasattr(self, 'subtitle_view_frame') else None
         if not (hasattr(self, 'auto_format_plain_text_to_srt_var') and \
                 self.auto_format_plain_text_to_srt_var.get() and \
-                hasattr(self, 'subtitle_textbox') and self.subtitle_textbox.winfo_exists()):
+                subtitle_textbox and subtitle_textbox.winfo_exists()):
             return
 
-        plain_text_content = self.subtitle_textbox.get("1.0", "end-1c").strip()
+        plain_text_content = subtitle_textbox.get("1.0", "end-1c").strip()
 
         if not plain_text_content:
             logging.debug("[AutoFormatSRT] Textbox rỗng, không chuyển đổi.")
@@ -25361,9 +24967,9 @@ class SubtitleApp(ctk.CTk):
             srt_output_string = format_srt_data_to_string(parsed_srt_data)
             
             try:
-                self.subtitle_textbox.configure(state="normal")
-                self.subtitle_textbox.delete("1.0", "end")
-                self.subtitle_textbox.insert("1.0", srt_output_string)
+                subtitle_textbox.configure(state="normal")
+                subtitle_textbox.delete("1.0", "end")
+                subtitle_textbox.insert("1.0", srt_output_string)
                 self.allow_edit_sub = True # Cho phép lưu lại sau khi định dạng
                 self.current_srt_path = None
                 self.update_status("✅ Văn bản đã được tự động định dạng thành SRT.")
@@ -32529,22 +32135,54 @@ class SubtitleApp(ctk.CTk):
 
             genai.configure(api_key=api_key_to_test)
 
-            logging.debug("[API Check] Đang thử tạo model và generate_content('test')...")
+            logging.debug("[API Check] Đang thử kiểm tra API key bằng list_models()...")
             
-            # Khởi tạo model
-            model = genai.GenerativeModel('gemini-1.5-pro-latest')
+            # Thử list_models() để kiểm tra API key (cách này ổn định hơn và không cần model name cụ thể)
+            models = genai.list_models()
             
-            # Thử gửi một yêu cầu generate_content cực nhỏ và vô hại.
-            # Đây là bài kiểm tra thực tế hơn nhiều so với list_models().
-            model.generate_content(
-                "test", 
-                generation_config=genai.types.GenerationConfig(max_output_tokens=1, temperature=0.0)
-            )
+            # Kiểm tra xem có model nào khả dụng không
+            model_names = [m.name for m in models]
+            logging.debug(f"[API Check] Số lượng models có sẵn: {len(model_names)}")
+            
+            # Nếu list_models() thành công và có models, API key đã hợp lệ
+            if not model_names:
+                raise Exception("Không tìm thấy model nào khả dụng.")
+            
+            # Thử test generate_content với một model nếu có thể (không bắt buộc)
+            tested_generate = False
+            for preferred_model in ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-pro', 'gemini-1.5-pro-latest']:
+                try:
+                    # Tìm model name đầy đủ từ danh sách
+                    full_model_name = None
+                    for m_name in model_names:
+                        if preferred_model in m_name.lower():
+                            full_model_name = m_name
+                            break
+                    
+                    if full_model_name:
+                        # Lấy short name từ full name (ví dụ: models/gemini-1.5-pro -> gemini-1.5-pro)
+                        short_name = full_model_name.split('/')[-1] if '/' in full_model_name else full_model_name
+                        logging.debug(f"[API Check] Đang thử test generate_content với model: {short_name}")
+                        model = genai.GenerativeModel(short_name)
+                        model.generate_content(
+                            "test", 
+                            generation_config=genai.types.GenerationConfig(max_output_tokens=1, temperature=0.0)
+                        )
+                        tested_generate = True
+                        logging.debug(f"[API Check] Test generate_content thành công với {short_name}")
+                        break
+                except Exception as test_e:
+                    # Bỏ qua lỗi khi test model này, thử model tiếp theo
+                    logging.debug(f"[API Check] Không thể test với {preferred_model}: {test_e}")
+                    continue
+            
+            if not tested_generate:
+                logging.debug("[API Check] Không test được generate_content, nhưng list_models() thành công nên API key vẫn hợp lệ.")
 
-            # Nếu dòng trên không gây lỗi, key và môi trường đều ổn.
-            status_message = "Key hợp lệ! (Kết nối thành công)"
+            # Nếu list_models() thành công (đã đến đây), key và môi trường đều ổn.
+            status_message = "✅ Key hợp lệ! (Kết nối thành công)"
             status_color = ("#0B8457", "lightgreen") # Xanh đậm cho nền sáng, xanh tươi cho nền tối
-            logging.info(f"[API Check] Kiểm tra Gemini Key thành công (bản nâng cấp).")
+            logging.info(f"[API Check] Kiểm tra Gemini Key thành công. Tìm thấy {len(model_names)} model(s) khả dụng.")
 
         except google_api_exceptions.PermissionDenied as e:
             logging.warning(f"[API Check] Lỗi xác thực Gemini: {e}")
@@ -32552,8 +32190,13 @@ class SubtitleApp(ctk.CTk):
             status_color = "orange"
         except google_api_exceptions.GoogleAPICallError as e:
             # Lỗi này có thể do mạng hoặc các vấn đề kết nối khác
-            logging.error(f"[API Check] Lỗi gọi API Google (có thể do mạng): {e}")
-            status_message = "Lỗi: Không kết nối được tới Google."
+            error_str = str(e)
+            if "404" in error_str or "not found" in error_str.lower():
+                logging.warning(f"[API Check] Lỗi model không tìm thấy: {e}")
+                status_message = "Lỗi: Model không khả dụng, nhưng API key có thể hợp lệ. Vui lòng thử lại."
+            else:
+                logging.error(f"[API Check] Lỗi gọi API Google (có thể do mạng): {e}")
+                status_message = "Lỗi: Không kết nối được tới Google."
             status_color = "red"
         except Exception as e:
             # Bắt tất cả các lỗi khác, bao gồm cả "Illegal header value" nếu nó xảy ra ở đây
