@@ -55,7 +55,7 @@ from utils.helpers import get_default_downloads_folder, safe_int, parse_timecode
 from utils.ffmpeg_utils import find_ffmpeg, find_ffprobe, create_ffmpeg_concat_file_list, ffmpeg_split_media, get_video_duration_s
 from utils.file_utils import prepare_batch_queue
 from utils.keep_awake import KeepAwakeManager
-from utils.system_utils import run_system_command, shutdown_system, cancel_shutdown_system, is_cuda_available, cleanup_stale_chrome_processes, normalize_hwid_string, is_plausible_hwid
+from utils.system_utils import run_system_command, shutdown_system, cancel_shutdown_system, is_cuda_available, cleanup_stale_chrome_processes, normalize_hwid_string, is_plausible_hwid, ensure_single_instance, release_mutex
 from utils.srt_utils import parse_srt_for_slideshow_timing, format_srt_data_to_string, extract_dialogue_from_srt_string, write_srt, write_vtt
 from exceptions.app_exceptions import SingleInstanceException
 from config.settings import get_config_path, get_font_cache_path, get_google_voices_cache_path, load_config, save_config
@@ -82,6 +82,10 @@ from services.youtube_upload_service import upload_youtube_thumbnail, get_playli
 from services.youtube_upload_api_service import upload_video_to_youtube
 from services.youtube_browser_upload_service import click_with_fallback, init_chrome_driver, YOUTUBE_LOCATORS
 from services.google_api_service import get_google_api_service
+from services.licensing_service import verify_status as licensing_verify_status, activate as licensing_activate, start_trial as licensing_start_trial
+from services.ffmpeg_service import run_ffmpeg_command as ffmpeg_run_command
+from services.download_service import stream_process_output as ytdlp_stream_output
+from services.update_service import is_newer as is_newer_version
 
 # --- Thêm các import cho Google Sheets API ---
 import os.path # Dùng để làm việc với đường dẫn file token/credentials
@@ -351,54 +355,27 @@ class SubtitleApp(ctk.CTk):
     # Hàm khởi tạo: Thiết lập các thuộc tính và trạng thái ban đầu của ứng dụng
     def __init__(self):
         # --- SINGLE INSTANCE CHECK (WINDOWS ONLY) ---
-        self.mutex = None # Khởi tạo thuộc tính mutex
+        self.mutex = None
         self.mutex_error_occurred = False # Cờ theo dõi lỗi liên quan đến mutex
 
-        if PYWIN32_AVAILABLE and sys.platform == "win32": # Chỉ chạy trên Windows và khi pywin32 có sẵn
+        if sys.platform == "win32":
             try:
-                # Cố gắng tạo (hoặc mở) Mutex.
-                # Tham số thứ hai (False) nghĩa là instance này không yêu cầu quyền sở hữu ban đầu ngay lập tức.
-                # Tham số thứ ba là tên Mutex duy nhất chúng ta đã định nghĩa.
-                self.mutex = win32event.CreateMutex(None, False, APP_MUTEX_NAME)
-                
-                # Kiểm tra lỗi cuối cùng từ Windows API sau khi gọi CreateMutex
-                last_error = win32api.GetLastError()
-
-                if last_error == ERROR_ALREADY_EXISTS:
-                    # Nếu lỗi là ERROR_ALREADY_EXISTS, nghĩa là Mutex đã được tạo bởi một instance khác.
-                    logging.warning(f"Một instance khác của '{APP_NAME}' Đang chạy (Mutex đã tồn tại).")
-                    
-                    if self.mutex: # Dù GetLastError báo lỗi, CreateMutex vẫn có thể trả về một handle
-                        win32api.CloseHandle(self.mutex) # Đóng handle không cần thiết này
-                        self.mutex = None
-                    
-                    # Gọi hàm (chúng ta sẽ định nghĩa ở Bước 3) để thử kích hoạt cửa sổ cũ
-                    activated_existing = self._activate_existing_window() # Sẽ thêm hàm này sau
-                    
-                    if activated_existing:
-                        logging.info("Đã kích hoạt cửa sổ của instance đang chạy. Instance mới sẽ thoát.")
-                    else:
-                        logging.warning("Không thể tự động kích hoạt cửa sổ của instance đang chạy.")
-                        
-                    # Ném exception để báo hiệu cho khối main biết và thoát instance này
-                    raise SingleInstanceException(f"{APP_NAME} Đang chạy.")
-                
-                # Nếu không có lỗi ERROR_ALREADY_EXISTS, instance này là instance đầu tiên
-                # và đã giữ (hoặc tạo mới) được Mutex.
+                self.mutex = ensure_single_instance(APP_MUTEX_NAME)
                 logging.info(f"Mutex '{APP_MUTEX_NAME}' được tạo/mở thành công. Đây là instance chính.")
-
             except SingleInstanceException:
-                # Ném lại exception này để khối main ở dưới bắt được
+                activated_existing = self._activate_existing_window() if hasattr(self, '_activate_existing_window') else False
+                if activated_existing:
+                    logging.info("Đã kích hoạt cửa sổ của instance đang chạy. Instance mới sẽ thoát.")
+                else:
+                    logging.warning("Không thể tự động kích hoạt cửa sổ của instance đang chạy.")
                 raise
             except Exception as e_mutex_create:
-                # Xử lý các lỗi không mong muốn khác khi làm việc với Mutex
                 logging.error(f"Lỗi nghiêm trọng khi tạo/kiểm tra Mutex: {e_mutex_create}", exc_info=True)
-                self.mutex_error_occurred = True # Đặt cờ báo lỗi
-                # Trong trường hợp này, chúng ta có thể cho phép ứng dụng tiếp tục chạy
-                # nhưng cảnh báo người dùng rằng chức năng single-instance có thể không hoạt động.
+                self.mutex_error_occurred = True
         # --- END SINGLE INSTANCE CHECK ---
         
         super().__init__()
+        self.title(APP_NAME)
 
         # 1. Lấy một logger có tên là "Piu" (từ biến APP_NAME của bạn)
         self.logger = logging.getLogger(APP_NAME)
@@ -13263,8 +13240,19 @@ class SubtitleApp(ctk.CTk):
                     temp_audio_for_vad = os.path.join(self.temp_folder, f"vad_audio_{uuid.uuid4().hex[:8]}.wav")
                     temp_files_for_vad.append(temp_audio_for_vad)
                     
-                    cmd_extract_audio = [ffmpeg_executable_vad, "-y", "-i", os.path.abspath(input_file), "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", os.path.abspath(temp_audio_for_vad)]
-                    subprocess.run(cmd_extract_audio, check=True, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
+                    cmd_extract_audio_params = [
+                        "-y", "-i", os.path.abspath(input_file),
+                        "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+                        os.path.abspath(temp_audio_for_vad)
+                    ]
+                    ffmpeg_run_command(
+                        cmd_extract_audio_params,
+                        process_name=f"{threading.current_thread().name}_VAD_ExtractAudio",
+                        stop_event=self.stop_event if hasattr(self, 'stop_event') else None,
+                        set_current_process=lambda p: setattr(self, 'current_process', p),
+                        clear_current_process=lambda: setattr(self, 'current_process', None),
+                        timeout_seconds=120,
+                    )
 
                     # 1b. Chạy VAD trên file audio tạm
                     detected_start_time = self._find_first_speech_timestamp_vad(temp_audio_for_vad)
@@ -13277,8 +13265,20 @@ class SubtitleApp(ctk.CTk):
                         cut_video_path = os.path.join(self.temp_folder, f"cut_video_{uuid.uuid4().hex[:8]}.mp4")
                         temp_files_for_vad.append(cut_video_path)
                         
-                        cmd_cut_video = [ffmpeg_executable_vad, "-y", "-ss", str(start_time_offset), "-i", os.path.abspath(input_file), "-c", "copy", os.path.abspath(cut_video_path)]
-                        subprocess.run(cmd_cut_video, check=True, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
+                        cmd_cut_video_params = [
+                            "-y", "-ss", str(start_time_offset),
+                            "-i", os.path.abspath(input_file),
+                            "-c", "copy",
+                            os.path.abspath(cut_video_path)
+                        ]
+                        ffmpeg_run_command(
+                            cmd_cut_video_params,
+                            process_name=f"{threading.current_thread().name}_VAD_CutVideo",
+                            stop_event=self.stop_event if hasattr(self, 'stop_event') else None,
+                            set_current_process=lambda p: setattr(self, 'current_process', p),
+                            clear_current_process=lambda: setattr(self, 'current_process', None),
+                            timeout_seconds=180,
+                        )
                         
                         if os.path.exists(cut_video_path):
                             video_path_for_whisper = cut_video_path
@@ -15398,7 +15398,13 @@ class SubtitleApp(ctk.CTk):
                 "-c:a", "copy", 
                 os.path.abspath(output_video)
             ]
-            self._run_ffmpeg_command(cmd_params, "Hardsub") # Hàm _run_ffmpeg_command của bạn
+            ffmpeg_run_command(
+                cmd_params,
+                "Hardsub",
+                stop_event=self.stop_event,
+                set_current_process=lambda p: setattr(self, 'current_process', p),
+                clear_current_process=lambda: setattr(self, 'current_process', None),
+            )
             logging.info(f"Hardsub hoàn tất cho: {os.path.basename(output_video)}")
         except Exception as e_burn:
             logging.error(f"Lỗi nghiêm trọng trong burn_sub_to_video: {e_burn}", exc_info=True)
@@ -15441,89 +15447,15 @@ class SubtitleApp(ctk.CTk):
             "-metadata:s:s:0", f"language={lang_code}", # Đặt metadata ngôn ngữ cho luồng sub
             os.path.abspath(output_path).replace("\\", "/")
         ]
-        self._run_ffmpeg_command(cmd_params, "Softsub") # Sử dụng hàm helper
+        ffmpeg_run_command(
+            cmd_params,
+            "Softsub",
+            stop_event=self.stop_event,
+            set_current_process=lambda p: setattr(self, 'current_process', p),
+            clear_current_process=lambda: setattr(self, 'current_process', None),
+        )
 
 
-    # Hàm hỗ trợ nội bộ: Chạy một lệnh FFmpeg với các tham số đã cho
-    def _run_ffmpeg_command(self, cmd_params, process_name="FFmpeg"):
-        """ Hàm hỗ trợ tìm ffmpeg và chạy danh sách lệnh, xử lý lỗi """
-
-        with keep_awake("Run FFmpeg command"):
-
-            ffmpeg_executable = find_ffmpeg()
-            if not ffmpeg_executable:
-                error_msg = "Không tìm thấy file thực thi FFmpeg. Vui lòng cài đặt hoặc đảm bảo nó có trong PATH / đi kèm."
-                logging.error(error_msg)
-                raise RuntimeError(error_msg)
-
-            full_cmd = [ffmpeg_executable] + cmd_params
-            log_cmd = subprocess.list2cmdline(full_cmd) # Để ghi log, xử lý khoảng trắng
-            logging.info(f"Đang chạy {process_name}: {log_cmd}")
-            # >>> THÊM ĐOẠN KIỂM TRA VÀ LOG NÀY <<<
-            if self.current_process and self.current_process.poll() is None:
-                logging.warning(f"[_run_ffmpeg_command] Phát hiện self.current_process (PID: {self.current_process.pid}) vẫn còn TRƯỚC KHI chạy lệnh mới cho '{process_name}'. Điều này không nên xảy ra thường xuyên.")
-                # Cân nhắc có nên cố gắng kill nó ở đây không, hoặc để logic gọi bên ngoài xử lý.
-                # Hiện tại chỉ log.
-            # >>> KẾT THÚC THÊM <<<
-
-            try:
-                creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-                # Gán self.current_process NGAY KHI Popen được gọi
-                self.current_process = subprocess.Popen(
-                    full_cmd,
-                    stdout=subprocess.PIPE, # Bắt stdout để có thể đọc nếu cần debug
-                    stderr=subprocess.PIPE, # Bắt stderr để lấy lỗi
-                    text=True,
-                    encoding='utf-8',
-                    errors='ignore',
-                    creationflags=creationflags
-                    # Bỏ check=False nếu bạn muốn Popen ném lỗi nếu không thực thi được
-                )
-                proc_local_ref = self.current_process # Giữ tham chiếu cục bộ để dùng trong finally
-                logging.info(f"[{process_name}] Tiến trình FFmpeg (PID: {proc_local_ref.pid}) đã bắt đầu.")
-
-                # CHỜ TIẾN TRÌNH VÀ ĐỌC OUTPUT
-                # Bạn có thể đọc output ở đây nếu cần, nhưng để đơn giản, ta chỉ wait và kiểm tra return code
-                # stdout_data, stderr_data = proc_local_ref.communicate(timeout=...) # Đặt timeout phù hợp
-                try:
-                    # Chờ tiến trình hoàn thành. Thời gian chờ có thể cần điều chỉnh.
-                    # Ví dụ: 1800 giây = 30 phút cho các tác vụ hardsub/merge dài.
-                    stdout_data, stderr_data = proc_local_ref.communicate(timeout=1800)
-                except subprocess.TimeoutExpired:
-                    logging.error(f"[{process_name}] FFmpeg (PID: {proc_local_ref.pid}) bị timeout. Đang thử kill...")
-                    proc_local_ref.kill()
-                    stdout_data, stderr_data = proc_local_ref.communicate() # Lấy output sau khi kill
-                    raise RuntimeError(f"{process_name} bị timeout.") # Ném lỗi để khối ngoài bắt
-
-                return_code = proc_local_ref.returncode
-
-                # KIỂM TRA STOP_EVENT SAU KHI COMMUNICATE (quan trọng nếu FFmpeg chạy rất nhanh)
-                if self.stop_event.is_set():
-                    logging.warning(f"[{process_name}] Phát hiện stop_event SAU KHI FFmpeg (PID: {proc_local_ref.pid}) chạy xong hoặc bị dừng/timeout. Coi như bị dừng.")
-                    # Nếu FFmpeg đã chạy xong (returncode=0) nhưng stop_event được set ngay sau đó,
-                    # có thể file đã được tạo. Tuy nhiên, để nhất quán với việc "dừng", ta coi như thất bại.
-                    raise InterruptedError(f"{process_name} bị dừng bởi người dùng (phát hiện sau khi FFmpeg kết thúc).")
-
-                if return_code != 0:
-                    logging.error(f"[{process_name}] FFmpeg (PID: {proc_local_ref.pid}) thất bại với mã {return_code}:")
-                    logging.error(f"  Lệnh: {log_cmd}")
-                    # stderr_data đã là string do text=True
-                    logging.error(f"  Stderr: {stderr_data[-1500:]}") # Ghi log phần cuối của stderr
-                    raise RuntimeError(f"{process_name} thất bại. Kiểm tra log để biết chi tiết. Đoạn Stderr: {stderr_data[-200:]}")
-                else:
-                    logging.info(f"[{process_name}] FFmpeg (PID: {proc_local_ref.pid}) hoàn thành thành công (mã {return_code}).")
-            except FileNotFoundError:
-                logging.error(f"Không tìm thấy file thực thi FFmpeg tại '{ffmpeg_executable}'.")
-                raise RuntimeError(f"Không thể thực thi FFmpeg tại '{ffmpeg_executable}'.")
-            except Exception as e:
-                logging.error(f"Lỗi không xác định khi chạy {process_name}: {e}", exc_info=True)
-                raise # Ném lại các lỗi khác
-
-            finally:
-                # Đảm bảo self.current_process được reset CHỈ KHI nó là tiến trình vừa chạy
-                if hasattr(self, 'current_process') and self.current_process is proc_local_ref:
-                    self.current_process = None
-                    logging.debug(f"[_run_ffmpeg_command] Đã reset self.current_process cho '{process_name}' (PID: {proc_local_ref.pid if proc_local_ref else 'N/A'}) trong finally.")
                 
 # --------------------
 # 4.8 Logic Cốt lõi - Quản lý Model Whisper
@@ -15948,7 +15880,7 @@ class SubtitleApp(ctk.CTk):
         # Cập nhật status UI (chỉ nên gọi self.after một lần ở đầu nếu có thể)
         self.after(0, lambda: self.update_status("📡 Đang xác minh bản quyền trực tuyến..."))
 
-        params = {'action': 'verify_status', 'key': key_param_for_server, 'hwid': hwid_to_verify}
+        params = {'key': key_param_for_server, 'hwid': hwid_to_verify}
 
         server_returned_activation_status = "UNKNOWN_ERROR_CLIENT"
         server_data_payload = {}
@@ -15956,22 +15888,15 @@ class SubtitleApp(ctk.CTk):
         response_text_debug = ""
 
         try:
-            response = requests.get(APPS_SCRIPT_URL, params=params, timeout=25)
-            response_text_debug = response.text
-            response.raise_for_status()
-            result = response.json()
+            result = licensing_verify_status(params.get('key', ''), params.get('hwid', ''))
+            response_text_debug = result.get('raw', '')
             logging.info(f"{log_prefix_polv} Phản hồi từ server: {result}")
-
-            server_status_field = result.get("status")
-
-            if server_status_field == "success":
+            if result.get('status') in ("success", "error"):
                 server_returned_activation_status = result.get("activation_status", "INACTIVE")
-                server_data_payload = result
-                server_message_payload = result.get("message", "Trạng thái hợp lệ nhưng không có thông điệp.")
-            elif server_status_field == "error":
-                server_returned_activation_status = result.get("activation_status", "INACTIVE")
-                server_message_payload = result.get("message", "Server Apps Script báo lỗi logic.")
-                server_data_payload = result
+                server_data_payload = result.get('data', {})
+                server_message_payload = result.get("message", "") or server_message_payload
+                if result.get('status') == 'error':
+                    pass
                 logging.warning(f"{log_prefix_polv} Server báo lỗi logic: {server_message_payload} (Code trạng thái từ server: {server_returned_activation_status})")
             else:
                 server_returned_activation_status = "INVALID_SERVER_RESPONSE_STRUCTURE"
@@ -16877,13 +16802,10 @@ class SubtitleApp(ctk.CTk):
              _update_status("⛔ Lỗi: Không thể lấy HWID")
              return # Kích hoạt thất bại trong thread
 
-        params = {'action': 'activate', 'key': license_key, 'hwid': current_hwid}
-        logging.debug(f"Đang gửi yêu cầu kích hoạt: {APPS_SCRIPT_URL} với {params}")
+        logging.debug(f"Đang gửi yêu cầu kích hoạt qua LicensingService")
 
         try:
-            response = requests.get(APPS_SCRIPT_URL, params=params, timeout=30)
-            response.raise_for_status()
-            result = response.json()
+            result = licensing_activate(license_key, current_hwid)
             logging.info(f"Phản hồi server kích hoạt: {result}")
 
             if result.get("status") == "success":
@@ -16943,7 +16865,7 @@ class SubtitleApp(ctk.CTk):
             _show_error("Lỗi Kết nối", f"Không thể kết nối đến server kích hoạt.\nLỗi: {e}")
             _update_status("⛔ Lỗi: Mạng/HTTP")
         except json.JSONDecodeError:
-            logging.error(f"Phản hồi JSON không hợp lệ từ server kích hoạt: {response.text[:200]}...")
+            logging.error("Phản hồi JSON không hợp lệ từ server kích hoạt.")
             _show_error("Lỗi Phản hồi", "Server kích hoạt trả về dữ liệu không hợp lệ.")
             _update_status("⛔ Lỗi: Phản hồi Server không hợp lệ")
         except Exception as e:
@@ -16999,25 +16921,12 @@ class SubtitleApp(ctk.CTk):
 
             # 2) Gọi server
             _update_status("Đang liên hệ server để bắt đầu dùng thử...")
-            params = {'action': 'start_trial', 'hwid': current_hwid}
-            logging.info(f"{log_prefix} Chuẩn bị gửi yêu cầu GET tới: {APPS_SCRIPT_URL}")
-            logging.info(f"{log_prefix} Tham số (params): {params}")
+            logging.info(f"{log_prefix} Gọi LicensingService.start_trial")
 
             response_text_debug_trial = ""
             try:
-                response = requests.get(APPS_SCRIPT_URL, params=params, timeout=20)
-                logging.info(f"{log_prefix} Server đã phản hồi.")
-                logging.info(f"{log_prefix} Status Code: {response.status_code}")
-                logging.info(f"{log_prefix} Headers: {response.headers}")
-                response_text_debug_trial = response.text
-                logging.info(f"{log_prefix} RAW Response Text:\n--- START RESPONSE ---\n{response_text_debug_trial}\n--- END RESPONSE ---")
-
-                response.raise_for_status()
-                try:
-                    result = response.json()
-                except json.JSONDecodeError:
-                    # fallback nếu server trả text JSON không chuẩn
-                    result = json.loads(response_text_debug_trial)
+                result = licensing_start_trial(current_hwid)
+                response_text_debug_trial = result.get('raw', '')
                 logging.info(f"Phản hồi server dùng thử: {result}")
 
             except requests.exceptions.RequestException as e:
@@ -17151,10 +17060,15 @@ class SubtitleApp(ctk.CTk):
         config_changed_by_update_check = False # Cờ để biết có cần lưu config không
 
         try:
-            res = requests.get(update_url, timeout=15)
-            res.raise_for_status()
-            data = res.json()
-            logging.info(f"Phản hồi kiểm tra cập nhật: {data}")
+            from services.update_service import fetch_update_info
+            svc_resp = fetch_update_info(update_url, timeout_seconds=15)
+            if svc_resp.get('status') == 'network_error':
+                raise requests.exceptions.RequestException(svc_resp.get('error', 'Network error'))
+            if svc_resp.get('status') == 'invalid_json':
+                raise json.JSONDecodeError("Invalid JSON", doc="", pos=0)
+            if svc_resp.get('status') == 'invalid':
+                raise ValueError(svc_resp.get('error', 'Invalid data'))
+            data = svc_resp.get('data', {})
 
             latest_ver = data.get("version", "").strip()
             changelog = data.get("changelog", "N/A")
@@ -17163,7 +17077,7 @@ class SubtitleApp(ctk.CTk):
             if not latest_ver or not dl_url:
                 raise ValueError("Thiếu 'version' hoặc 'download_url' trong thông tin cập nhật.")
 
-            if version.parse(latest_ver) > version.parse(CURRENT_VERSION):
+            if is_newer_version(latest_ver, CURRENT_VERSION):
                 skipped_ver_in_cfg = self.cfg.get("skipped_specific_version")
 
                 # Nếu phiên bản mới này khác và thực sự mới hơn một phiên bản đã từng bị bỏ qua,
@@ -17219,7 +17133,7 @@ class SubtitleApp(ctk.CTk):
             if manual: _show_error("Lỗi Kết nối", f"Không thể kiểm tra cập nhật:\n{e}")
         except json.JSONDecodeError:
             error_occurred = True
-            logging.error(f"Phản hồi JSON không hợp lệ từ server cập nhật: {res.text[:200]}")
+            logging.error("Phản hồi JSON không hợp lệ từ server cập nhật.")
             msg = "⚠️ Lỗi đọc thông tin cập nhật."
             self.after(0, self.update_status, msg) # Luôn báo lỗi
             if manual: _show_error("Lỗi Phản hồi", "Không thể đọc thông tin cập nhật từ server.")
@@ -18209,7 +18123,7 @@ class SubtitleApp(ctk.CTk):
             try:
                 logging.debug(f"Chuẩn bị giải phóng Mutex handle: {self.mutex} từ _perform_full_quit.")
                 win32api.CloseHandle(self.mutex)
-                self.mutex = None # Quan trọng: Đặt lại để tránh giải phóng nhiều lần
+                self.mutex = None
                 logging.info("Đã giải phóng Mutex (Windows) thành công khi đóng ứng dụng.")
             except Exception as e_release_mutex_on_quit:
                 logging.error(f"Lỗi khi giải phóng Mutex (Windows) lúc thoát: {e_release_mutex_on_quit}")
@@ -18230,6 +18144,119 @@ class SubtitleApp(ctk.CTk):
         # 6. Đóng cửa sổ chính (an toàn qua self.after)
         logging.info("Lên lịch hủy cửa sổ để thoát hoàn toàn.")
         self.after(100, self.destroy) # Chờ nhẹ để các tác vụ khác hoàn tất
+
+    # --------------------
+    # 4.10.x Kích hoạt cửa sổ instance đang chạy (Windows)
+    # --------------------
+    def _activate_existing_window(self) -> bool:
+        """Thử đưa cửa sổ instance đang chạy lên trước (Windows)."""
+        if sys.platform != "win32":
+            return False
+        try:
+            import win32gui
+            import win32con
+            import win32process
+            import os
+            import time
+
+            target_window_title_keyword = APP_NAME
+            found_hwnd = None
+            current_pid = os.getpid()
+
+            def enum_windows_callback(hwnd, lParam):
+                nonlocal found_hwnd
+                try:
+                    window_title = win32gui.GetWindowText(hwnd)
+                    _, window_pid = win32process.GetWindowThreadProcessId(hwnd)
+                    if target_window_title_keyword in window_title and window_pid != current_pid:
+                        if win32gui.GetParent(hwnd) == 0:
+                            class_name = win32gui.GetClassName(hwnd)
+                            if ("TkTopLevel" in class_name) or ("CTK" in class_name) or (class_name == "Tk"):
+                                found_hwnd = hwnd
+                                return False
+                            elif not found_hwnd:
+                                found_hwnd = hwnd
+                except Exception:
+                    pass
+                return True
+
+            try:
+                win32gui.EnumWindows(enum_windows_callback, None)
+            except Exception as e_enum_call:
+                logging.error(f"Lỗi trong quá trình gọi EnumWindows: {e_enum_call}")
+                return False
+
+            if found_hwnd:
+                try:
+                    placement = win32gui.GetWindowPlacement(found_hwnd)
+                    if placement[1] == win32con.SW_SHOWMINIMIZED:
+                        win32gui.ShowWindow(found_hwnd, win32con.SW_RESTORE)
+                    else:
+                        win32gui.ShowWindow(found_hwnd, win32con.SW_SHOWNORMAL)
+
+                    # Cho phép foreground từ bất kỳ tiến trình nào (ASFW_ANY = -1)
+                    try:
+                        import ctypes
+                        ctypes.windll.user32.AllowSetForegroundWindow(ctypes.c_int(-1))
+                    except Exception:
+                        pass
+
+                    # Gắn luồng để nâng quyền focus
+                    try:
+                        current_thread_id = win32api.GetCurrentThreadId()
+                        target_thread_id, _ = win32process.GetWindowThreadProcessId(found_hwnd)
+                        win32process.AttachThreadInput(current_thread_id, target_thread_id, True)
+                    except Exception:
+                        current_thread_id = None
+                        target_thread_id = None
+
+                    # Toggle topmost để vượt hạn chế focus
+                    SWP_FLAGS = win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW
+                    try:
+                        win32gui.SetWindowPos(found_hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0, SWP_FLAGS)
+                        time.sleep(0.05)
+                        win32gui.SetWindowPos(found_hwnd, win32con.HWND_NOTOPMOST, 0, 0, 0, 0, SWP_FLAGS)
+                    except Exception:
+                        pass
+
+                    # Thứ tự gọi tối ưu
+                    try:
+                        win32gui.BringWindowToTop(found_hwnd)
+                    except Exception:
+                        pass
+                    try:
+                        win32gui.SetForegroundWindow(found_hwnd)
+                    except Exception:
+                        pass
+                    try:
+                        win32gui.SetActiveWindow(found_hwnd)
+                    except Exception:
+                        pass
+
+                    # Tháo gắn luồng nếu đã gắn
+                    try:
+                        if current_thread_id and target_thread_id:
+                            win32process.AttachThreadInput(current_thread_id, target_thread_id, False)
+                    except Exception:
+                        pass
+
+                    # Nháy để thu hút chú ý nếu vẫn ở nền
+                    try:
+                        win32gui.FlashWindow(found_hwnd, True)
+                    except Exception:
+                        pass
+
+                    logging.info("Đã kích hoạt cửa sổ instance đang chạy (BringToFront).")
+                    return True
+                except Exception as e_activate:
+                    logging.error(f"Lỗi khi cố gắng kích hoạt cửa sổ: {e_activate}", exc_info=True)
+                    return False
+            else:
+                logging.info(f"Không tìm thấy cửa sổ của instance {APP_NAME} (khác PID hiện tại) đang chạy để kích hoạt.")
+                return False
+        except Exception as e:
+            logging.error(f"Không thể kích hoạt cửa sổ instance đang chạy: {e}", exc_info=True)
+            return False
 
     # --------------------
     # 4.11 Logic Cốt lõi - Quản lý Khay hệ thống
@@ -20054,26 +20081,23 @@ class SubtitleApp(ctk.CTk):
             # Reset progress bar trước khi bắt đầu
             self.after(0, lambda: self.download_view_frame.update_download_progress(0))
 
-            # --- 3. Thực thi tiến trình yt-dlp và đọc output ---
-            startupinfo = None; creationflags = 0
-            if os.name == 'nt': # Cấu hình ẩn cửa sổ console trên Windows
-                startupinfo = subprocess.STARTUPINFO(); startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW; startupinfo.wShowWindow = subprocess.SW_HIDE; creationflags = subprocess.CREATE_NO_WINDOW
+            # --- 3. Thực thi tiến trình yt-dlp (streaming output) ---
+            proc = None
+            def _set_proc(p):
+                nonlocal proc
+                proc = p
+                try:
+                    setattr(self, 'current_process', p)
+                except Exception:
+                    pass
 
-            # Khởi chạy tiến trình con
-            self.current_process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,         # Bắt stdout
-                stderr=subprocess.STDOUT,        # Chuyển hướng stderr vào stdout để bắt cả hai
-                text=True,                       # Đọc output dạng text
-                encoding='utf-8',                # Encoding utf-8
-                errors='replace',                # Thay thế ký tự lỗi encoding
-                bufsize=1,                       # Đọc từng dòng (line-buffered)
-                universal_newlines=True,         # Đảm bảo newline chuẩn
-                startupinfo=startupinfo,         # Thông tin khởi chạy (Windows)
-                creationflags=creationflags      # Cờ khởi chạy (Windows)
-            )
-            proc = self.current_process # Gán vào biến cục bộ để dùng trong finally
-            logging.info(f"[{thread_name}] Đã bắt đầu tiến trình yt-dlp (PID: {proc.pid}). Đang đọc output...")
+            def _clear_proc():
+                nonlocal proc
+                proc = None
+                try:
+                    setattr(self, 'current_process', None)
+                except Exception:
+                    pass
 
             # --- 4. Vòng lặp đọc Output từ yt-dlp ---
             progress_regex = re.compile(r"\[download\]\s+(\d{1,3}(?:[.,]\d+)?)%")
@@ -20081,7 +20105,13 @@ class SubtitleApp(ctk.CTk):
             last_percent = -1.0; is_processing_step = False; potential_output_path = None
 
             # Đọc từng dòng output cho đến khi tiến trình kết thúc
-            for line in iter(proc.stdout.readline, ''):
+            for line in ytdlp_stream_output(
+                cmd,
+                process_name=f"{thread_name}_yt-dlp",
+                hide_console_window=True,
+                set_current_process=_set_proc,
+                clear_current_process=_clear_proc,
+            ):
                  if self.stop_event.is_set(): # Xử lý dừng bởi người dùng
                       logging.warning(f"[{thread_name}] Cờ dừng được kích hoạt.")
                       try:
@@ -20130,29 +20160,8 @@ class SubtitleApp(ctk.CTk):
             # --- Kết thúc vòng lặp đọc Output ---
             logging.info(f"[{thread_name}] Hoàn tất đọc stdout. Chờ tiến trình yt-dlp thoát...")
 
-            # --- 5. Chờ tiến trình kết thúc và lấy mã trả về ---
-            return_code = None
-            if proc: # Chỉ chờ nếu tiến trình đã được khởi tạo thành công
-                if self.stop_event.is_set():
-                     logging.warning(f"[{thread_name}] Đã yêu cầu dừng, không chờ tiến trình.")
-                     return_code = -100 # Mã tự đặt
-                else:
-                    # Khối try/except chờ (định dạng đúng)
-                    try:
-                        return_code = proc.wait(timeout=900) # Chờ tối đa 15 phút
-                        logging.info(f"[{thread_name}] Tiến trình yt-dlp thoát với mã: {return_code}")
-                    except subprocess.TimeoutExpired:
-                        logging.error(f"[{thread_name}] Tiến trình yt-dlp quá thời gian chờ!")
-                        try:
-                            if proc.poll() is None: proc.kill(); proc.wait(5); logging.info("Đã kill do timeout.")
-                        except Exception as kill_err: logging.error(f"Lỗi kill sau timeout: {kill_err}")
-                        return_code = -99
-                    except Exception as wait_err:
-                        logging.error(f"[{thread_name}] Lỗi khi chờ tiến trình: {wait_err}", exc_info=True)
-                        return_code = -98
-            else:
-                 logging.warning(f"[{thread_name}] Biến 'proc' không được gán (lỗi trước Popen?).")
-                 return_code = -97
+            # --- 5. Lấy mã trả về ---
+            return_code = -97 if proc is None else (proc.returncode if proc.poll() is not None else proc.wait(timeout=1))
 
             self.current_process = None # Xóa tham chiếu sau khi xử lý xong
 
@@ -21596,45 +21605,27 @@ class SubtitleApp(ctk.CTk):
         worker_log_prefix = f"[{threading.current_thread().name}_FFmpegConcatVideos]"
         logging.info(f"{worker_log_prefix} Bắt đầu ghép các video clip từ: {concat_list_file}")
 
-        ffmpeg_executable = find_ffmpeg()
-        if not ffmpeg_executable:
-            logging.error(f"{worker_log_prefix} Không tìm thấy FFmpeg.")
-            return False
-
-        command = [
-            ffmpeg_executable,
+        cmd_params = [
             "-y",
             "-f", "concat",
             "-safe", "0",
             "-i", os.path.abspath(concat_list_file),
-            "-c", "copy",  # Sao chép codec vì các clip đã được encode đúng định dạng
+            "-c", "copy",
             os.path.abspath(final_output_path)
         ]
-        
-        process_concat = None
         try:
-            creation_flags = subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
-            process_concat = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creation_flags)
-            self.dub_current_ffmpeg_process = process_concat
-            
-            _, stderr_bytes = process_concat.communicate(timeout=1800) # Timeout 30 phút cho việc ghép
-            return_code = process_concat.returncode
-            
-            if self.dub_stop_event.is_set():
-                return False
-
-            if return_code != 0:
-                logging.error(f"{worker_log_prefix} Lỗi FFmpeg khi ghép video (Code: {return_code}). STDERR: {stderr_bytes.decode('utf-8', 'ignore')[:500]}")
-                return False
-                
+            ffmpeg_run_command(
+                cmd_params,
+                process_name=f"{worker_log_prefix}_ConcatVideos",
+                stop_event=self.dub_stop_event,
+                set_current_process=lambda p: setattr(self, 'dub_current_ffmpeg_process', p),
+                clear_current_process=lambda: setattr(self, 'dub_current_ffmpeg_process', None),
+                timeout_seconds=1800,
+            )
             return True
         except Exception as e:
-            logging.error(f"{worker_log_prefix} Lỗi không mong muốn khi ghép video: {e}", exc_info=True)
-            if process_concat and process_concat.poll() is None: process_concat.kill()
+            logging.error(f"{worker_log_prefix} Lỗi ghép video: {e}", exc_info=True)
             return False
-        finally:
-            if self.dub_current_ffmpeg_process is process_concat:
-                self.dub_current_ffmpeg_process = None
 
 # Hàm tạo slidle show cho ghép thủ công
     def _create_video_from_images_thread_for_sub_pause(self, image_paths, current_srt_path_for_timing, temp_srt_path_to_delete=None):
@@ -27224,11 +27215,17 @@ class SubtitleApp(ctk.CTk):
                 os.path.abspath(temp_trimmed_path)
             ]
             
-            process_trim = subprocess.Popen(cmd_trim_only, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
-            _, stderr_trim = process_trim.communicate(timeout=60)
-            
-            if process_trim.returncode != 0:
-                logging.error(f"{base_log_prefix} Lỗi khi cắt khoảng lặng (bước 1): {stderr_trim.decode('utf-8', 'ignore')}")
+            try:
+                ffmpeg_run_command(
+                    cmd_trim_only[1:],
+                    process_name=f"{base_log_prefix}_TrimSilence",
+                    stop_event=self.dub_stop_event,
+                    set_current_process=lambda p: setattr(self, 'dub_current_ffmpeg_process', p),
+                    clear_current_process=lambda: setattr(self, 'dub_current_ffmpeg_process', None),
+                    timeout_seconds=90,
+                )
+            except Exception as e_trim:
+                logging.error(f"{base_log_prefix} Lỗi khi cắt khoảng lặng (bước 1): {e_trim}")
                 return False
 
             trimmed_duration_s = get_video_duration_s(temp_trimmed_path)
@@ -27262,16 +27259,26 @@ class SubtitleApp(ctk.CTk):
             
             logging.debug(f"{base_log_prefix} Lệnh FFmpeg cuối cùng: {' '.join(command_final)}")
 
-            process_main = subprocess.Popen(command_final, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
-            _, stderr_main = process_main.communicate(timeout=60)
+            try:
+                ffmpeg_run_command(
+                    command_final[1:],
+                    process_name=f"{base_log_prefix}_ApplyFadePad",
+                    stop_event=self.dub_stop_event,
+                    set_current_process=lambda p: setattr(self, 'dub_current_ffmpeg_process', p),
+                    clear_current_process=lambda: setattr(self, 'dub_current_ffmpeg_process', None),
+                    timeout_seconds=120,
+                )
+            except Exception as e_main:
+                logging.error(f"{base_log_prefix} Lỗi khi áp dụng fade/pad (bước 3): {e_main}")
+                return False
 
-            if process_main.returncode == 0 and os.path.exists(temp_processed_path):
+            if os.path.exists(temp_processed_path):
                 # Ghi đè file gốc bằng file đã xử lý thành công
                 shutil.move(temp_processed_path, audio_file_path)
                 logging.info(f"{base_log_prefix} Tối ưu thành công.")
                 return True
             else:
-                logging.error(f"{base_log_prefix} Tối ưu thất bại (Code: {process_main.returncode}). Lỗi: {stderr_main.decode('utf-8', 'ignore')[:300]}")
+                logging.error(f"{base_log_prefix} Tối ưu thất bại: không tạo được file output tạm.")
                 return False
 
         except Exception as e:
@@ -27359,114 +27366,57 @@ class SubtitleApp(ctk.CTk):
 
         command.append(os.path.abspath(output_path))
         
-        logging.info(f"{worker_log_prefix_cutter} Lệnh FFmpeg cắt: {' '.join(command)}")
-        
-        process_to_run_cut = None
+        logging.info(f"{worker_log_prefix_cutter} Lệnh FFmpeg cắt (service): {' '.join(command[1:])}")
         try:
-            creation_flags_cut = subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
-            process_to_run_cut = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creation_flags_cut)
-            
-            # Lưu tiến trình hiện tại nếu self.dub_current_ffmpeg_process tồn tại
-            if hasattr(self, 'dub_current_ffmpeg_process'):
-                self.dub_current_ffmpeg_process = process_to_run_cut
-            
-            stdout_cut, stderr_cut = process_to_run_cut.communicate(timeout=60) # Timeout 60 giây cho việc cắt
-            return_code_cut = process_to_run_cut.returncode
-            
-            # Kiểm tra lại cờ dừng sau khi lệnh chạy xong hoặc timeout
-            if self.dub_stop_event.is_set():
-                logging.info(f"{worker_log_prefix_cutter} Cắt audio cho '{os.path.basename(input_path)}' có thể đã bị dừng trong quá trình chạy FFmpeg.")
-                if process_to_run_cut.poll() is None: # Nếu tiến trình vẫn chạy
-                    process_to_run_cut.terminate()
-                    try:
-                        process_to_run_cut.wait(timeout=2) # Chờ một chút để terminate
-                    except subprocess.TimeoutExpired:
-                        process_to_run_cut.kill() # Buộc dừng nếu terminate không hiệu quả
-                return False # Bị dừng
-
-            if return_code_cut != 0:
-                error_output_cut = stderr_cut.decode('utf-8', errors='ignore') if stderr_cut else "Không có thông tin lỗi stderr."
-                logging.error(f"{worker_log_prefix_cutter} Lỗi FFmpeg khi cắt audio '{os.path.basename(input_path)}' (Code: {return_code_cut}). STDERR: {error_output_cut[:300]}")
-                return False
-            
+            ffmpeg_run_command(
+                command[1:],
+                process_name=f"{worker_log_prefix_cutter}_CutAudio",
+                stop_event=self.dub_stop_event,
+                set_current_process=lambda p: setattr(self, 'dub_current_ffmpeg_process', p),
+                clear_current_process=lambda: setattr(self, 'dub_current_ffmpeg_process', None),
+                timeout_seconds=120,
+            )
             if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
                 logging.error(f"{worker_log_prefix_cutter} Lỗi cắt audio: File output '{os.path.basename(output_path)}' không được tạo hoặc rỗng.")
                 return False
-                
             logging.info(f"{worker_log_prefix_cutter} Cắt audio thành công: {os.path.basename(output_path)}")
             return True
-
-        except subprocess.TimeoutExpired:
-            logging.error(f"{worker_log_prefix_cutter} Timeout khi cắt audio '{os.path.basename(input_path)}'.")
-            if process_to_run_cut and process_to_run_cut.poll() is None:
-                process_to_run_cut.kill()
-            return False
         except Exception as e_general_cut:
-            logging.error(f"{worker_log_prefix_cutter} Lỗi không mong muốn khi cắt audio '{os.path.basename(input_path)}': {e_general_cut}", exc_info=True)
-            if process_to_run_cut and process_to_run_cut.poll() is None:
-                process_to_run_cut.kill()
+            logging.error(f"{worker_log_prefix_cutter} Lỗi khi cắt audio '{os.path.basename(input_path)}': {e_general_cut}")
             return False
-        finally:
-            # Reset self.dub_current_ffmpeg_process nếu nó trỏ đến tiến trình này
-            if hasattr(self, 'dub_current_ffmpeg_process') and self.dub_current_ffmpeg_process is process_to_run_cut:
-                self.dub_current_ffmpeg_process = None
-                logging.debug(f"{worker_log_prefix_cutter} Đã reset dub_current_ffmpeg_process (cut_audio).")
 
 
 # Hàm FFmpeg: Chuẩn hóa file âm thanh sang định dạng WAV mục tiêu
     def dub_ffmpeg_standardize_to_wav(self, input_path, output_path):
-        ffmpeg_executable = find_ffmpeg()
-        if not ffmpeg_executable:
-            logging.error("[DubbingFFmpeg] Không tìm thấy FFmpeg để chuẩn hóa WAV.")
-            return False
-
         if self.dub_stop_event.is_set(): # << KIỂM TRA DỪNG ĐẦU HÀM >>
             logging.info(f"[DubbingFFmpeg] Chuẩn hóa WAV bị hủy cho '{os.path.basename(input_path)}' do yêu cầu dừng.")
             return False
 
-        command = [
-            ffmpeg_executable, "-y", "-i", os.path.abspath(input_path),
+        cmd_params = [
+            "-y", "-i", os.path.abspath(input_path),
             "-ac", str(self.dub_TARGET_AUDIO_PROCESSING_CHANNELS),
             "-ar", str(self.dub_TARGET_AUDIO_PROCESSING_SAMPLE_RATE),
             "-c:a", self.dub_DEFAULT_WAV_CODEC,
             os.path.abspath(output_path)
         ]
-        logging.info(f"[DubbingFFmpeg] Chuẩn hóa WAV: {' '.join(command)}")
-        process_to_run = None
+        logging.info(f"[DubbingFFmpeg] Chuẩn hóa WAV (service): {' '.join(cmd_params)}")
         try:
-            creation_flags = subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
-            process_to_run = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creation_flags)
-            self.dub_current_ffmpeg_process = process_to_run # << LƯU TIẾN TRÌNH >>
-            
-            stdout, stderr = process_to_run.communicate(timeout=45) # Timeout ví dụ 45s
-            return_code = process_to_run.returncode
-            
-            if self.dub_stop_event.is_set():
-                logging.info(f"[DubbingFFmpeg] Chuẩn hóa WAV cho '{os.path.basename(input_path)}' có thể đã bị dừng giữa chừng.")
-                if process_to_run.poll() is None: process_to_run.terminate()
-                return False
-
-            if return_code != 0:
-                error_output = stderr.decode('utf-8', errors='ignore') if stderr else "Không có stderr."
-                logging.error(f"[DubbingFFmpeg] Lỗi CalledProcessError khi chuẩn hóa WAV '{os.path.basename(input_path)}' (Code: {return_code}). STDERR: {error_output[:300]}")
-                return False
+            ffmpeg_run_command(
+                cmd_params,
+                process_name="DubbingFFmpeg_StandardizeWAV",
+                stop_event=self.dub_stop_event,
+                set_current_process=lambda p: setattr(self, 'dub_current_ffmpeg_process', p),
+                clear_current_process=lambda: setattr(self, 'dub_current_ffmpeg_process', None),
+                timeout_seconds=60,
+            )
             if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
                 logging.error(f"[DubbingFFmpeg] Lỗi chuẩn hóa WAV: File output '{os.path.basename(output_path)}' không được tạo hoặc rỗng.")
                 return False
             logging.debug(f"[DubbingFFmpeg] Chuẩn hóa WAV thành công: {os.path.basename(output_path)}")
             return True
-        except subprocess.TimeoutExpired:
-            logging.error(f"[DubbingFFmpeg] Timeout khi chuẩn hóa WAV '{os.path.basename(input_path)}'.")
-            if process_to_run and process_to_run.poll() is None: process_to_run.kill()
-            return False # Bị dừng do timeout
         except Exception as e_gen:
-            logging.error(f"[DubbingFFmpeg] Lỗi không mong muốn khi chuẩn hóa WAV '{os.path.basename(input_path)}': {e_gen}", exc_info=True)
-            if process_to_run and process_to_run.poll() is None: process_to_run.kill()
+            logging.error(f"[DubbingFFmpeg] Lỗi khi chuẩn hóa WAV '{os.path.basename(input_path)}': {e_gen}", exc_info=True)
             return False
-        finally:
-            if self.dub_current_ffmpeg_process is process_to_run:
-                 self.dub_current_ffmpeg_process = None
-                 logging.debug(f"[DubbingFFmpeg] Đã reset dub_current_ffmpeg_process (standardize_wav).")
 
 
 # Hàm FFmpeg: Áp dụng hiệu ứng fade-in và fade-out cho file WAV
@@ -27529,58 +27479,36 @@ class SubtitleApp(ctk.CTk):
              actual_fade_in_start_s = 0.0 # Bỏ qua delay
              f_in_s = 0.0 # Bỏ qua fade_in
 
-        command = [
-            ffmpeg_executable, "-y", "-i", os.path.abspath(input_path),
+        cmd_params = [
+            "-y", "-i", os.path.abspath(input_path),
             "-af", f"afade=t=in:ss={actual_fade_in_start_s:.3f}:d={f_in_s:.3f},afade=t=out:st={fade_out_start_time_s:.3f}:d={f_out_s:.3f}",
             "-c:a", self.dub_DEFAULT_WAV_CODEC,
             "-ar", str(self.dub_TARGET_AUDIO_PROCESSING_SAMPLE_RATE),
             "-ac", str(self.dub_TARGET_AUDIO_PROCESSING_CHANNELS),
             os.path.abspath(output_path)
         ]
-        
-        logging.info(f"{worker_log_prefix_fade} Lệnh FFmpeg áp dụng Fade: {' '.join(command)}")
-        # ... (phần còn lại của hàm Popen, communicate, finally giữ nguyên) ...
-        process_to_run = None # Thêm khởi tạo
+        logging.info(f"{worker_log_prefix_fade} Lệnh FFmpeg áp dụng Fade (service): {' '.join(cmd_params)}")
         try:
-            creation_flags = subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
-            process_to_run = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creation_flags)
-            if hasattr(self, 'dub_current_ffmpeg_process'): # Quản lý tiến trình
-                self.dub_current_ffmpeg_process = process_to_run
-            
-            stdout, stderr = process_to_run.communicate(timeout=30)
-            return_code = process_to_run.returncode
-            
-            if self.dub_stop_event.is_set():
-                logging.info(f"{worker_log_prefix_fade} Bị hủy trong khi chạy FFmpeg fade.")
-                if process_to_run.poll() is None: process_to_run.terminate()
-                return False
-
-            if return_code != 0:
-                logging.error(f"{worker_log_prefix_fade} Lỗi FFmpeg khi áp dụng fade (Code: {return_code}). STDERR: {stderr.decode('utf-8', errors='ignore')[:250]}")
-                return False
+            return_code, stdout_data, stderr_data = ffmpeg_run_command(
+                cmd_params,
+                process_name=f"{worker_log_prefix_fade}ApplyFade",
+                stop_event=self.dub_stop_event,
+                set_current_process=lambda p: setattr(self, 'dub_current_ffmpeg_process', p),
+                clear_current_process=lambda: setattr(self, 'dub_current_ffmpeg_process', None),
+                timeout_seconds=60,
+            )
             if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
                  logging.error(f"{worker_log_prefix_fade} Lỗi áp dụng Fade: File output rỗng.")
                  return False
             return True
-        except subprocess.TimeoutExpired:
-            logging.error(f"{worker_log_prefix_fade} Timeout khi áp dụng fade cho '{os.path.basename(input_path)}'.")
-            if process_to_run and process_to_run.poll() is None: process_to_run.kill()
-            return False
         except Exception as e_gen_fade:
-            logging.error(f"{worker_log_prefix_fade} Lỗi không mong muốn khi áp dụng fade: {e_gen_fade}", exc_info=True)
-            if process_to_run and process_to_run.poll() is None: process_to_run.kill()
+            logging.error(f"{worker_log_prefix_fade} Lỗi khi áp dụng fade: {e_gen_fade}", exc_info=True)
             return False
-        finally:
-            if hasattr(self, 'dub_current_ffmpeg_process') and self.dub_current_ffmpeg_process is process_to_run:
-                 self.dub_current_ffmpeg_process = None
 
 
 # Hàm Tạo một file WAV chỉ chứa khoảng lặng với thời lượng cho trước.
     def dub_ffmpeg_create_silence_file(self, output_silence_wav_path, duration_ms):
-        ffmpeg_executable = find_ffmpeg()
-        if not ffmpeg_executable:
-            logging.error("[DubbingFFmpeg] Không tìm thấy FFmpeg để tạo file silence.")
-            return False
+        # Dùng service FFmpeg tập trung
 
         if self.dub_stop_event.is_set():
             logging.info(f"[DubbingFFmpeg] Tạo file silence bị hủy (output: {os.path.basename(output_silence_wav_path)}) do yêu cầu dừng.")
@@ -27597,46 +27525,31 @@ class SubtitleApp(ctk.CTk):
 
         duration_s_str = f"{duration_ms / 1000.0:.3f}" # Chuyển ms sang giây dạng chuỗi xxx.yyy
 
-        command = [
-            ffmpeg_executable, "-y", "-f", "lavfi",
+        cmd_params = [
+            "-y", "-f", "lavfi",
             "-i", f"anullsrc=cl=mono:r={self.dub_TARGET_AUDIO_PROCESSING_SAMPLE_RATE}:d={duration_s_str}",
-            "-c:a", self.dub_DEFAULT_WAV_CODEC, # Đảm bảo codec là WAV chuẩn
+            "-c:a", self.dub_DEFAULT_WAV_CODEC,
             "-ar", str(self.dub_TARGET_AUDIO_PROCESSING_SAMPLE_RATE),
             "-ac", str(self.dub_TARGET_AUDIO_PROCESSING_CHANNELS),
             os.path.abspath(output_silence_wav_path)
         ]
-        logging.info(f"[DubbingFFmpeg] Tạo file silence ({duration_ms}ms): {' '.join(command)}")
-        process_to_run = None
+        logging.info(f"[DubbingFFmpeg] Tạo file silence ({duration_ms}ms) (service): {' '.join(cmd_params)}")
         try:
-            creation_flags = subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
-            process_to_run = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creation_flags)
-            self.dub_current_ffmpeg_process = process_to_run
-            stdout, stderr = process_to_run.communicate(timeout=20) # Timeout ngắn cho tác vụ này
-            return_code = process_to_run.returncode
-            
-            if self.dub_stop_event.is_set():
-                logging.info(f"[DubbingFFmpeg] Tạo file silence cho '{os.path.basename(output_silence_wav_path)}' có thể đã bị dừng.")
-                if process_to_run.poll() is None: process_to_run.terminate()
-                return False
-
-            if return_code != 0:
-                logging.error(f"[DubbingFFmpeg] Lỗi CalledProcessError khi tạo file silence. STDERR: {stderr.decode('utf-8', errors='ignore')[:200]}")
-                return False
+            ffmpeg_run_command(
+                cmd_params,
+                process_name="DubbingFFmpeg_CreateSilence",
+                stop_event=self.dub_stop_event,
+                set_current_process=lambda p: setattr(self, 'dub_current_ffmpeg_process', p),
+                clear_current_process=lambda: setattr(self, 'dub_current_ffmpeg_process', None),
+                timeout_seconds=40,
+            )
             if not os.path.exists(output_silence_wav_path) or os.path.getsize(output_silence_wav_path) == 0:
                  logging.error(f"[DubbingFFmpeg] Lỗi tạo file silence: File output rỗng hoặc không được tạo.")
                  return False
             return True
-        except subprocess.TimeoutExpired:
-            logging.error(f"[DubbingFFmpeg] Timeout khi tạo file silence '{os.path.basename(output_silence_wav_path)}'.")
-            if process_to_run and process_to_run.poll() is None: process_to_run.kill()
-            return False
         except Exception as e_gen:
-            logging.error(f"[DubbingFFmpeg] Lỗi không mong muốn khi tạo file silence: {e_gen}", exc_info=True)
-            if process_to_run and process_to_run.poll() is None: process_to_run.kill()
+            logging.error(f"[DubbingFFmpeg] Lỗi khi tạo file silence: {e_gen}", exc_info=True)
             return False
-        finally:
-            if self.dub_current_ffmpeg_process is process_to_run:
-                 self.dub_current_ffmpeg_process = None
 
 
 # Hàm Thêm một khoảng lặng vào cuối của một file audio WAV đã có.
@@ -27699,10 +27612,7 @@ class SubtitleApp(ctk.CTk):
 
 # Hàm FFmpeg: Thêm khoảng lặng vào đầu file audio WAV
     def dub_ffmpeg_add_leading_silence(self, input_path, output_path, silence_duration_ms):
-        ffmpeg_executable = find_ffmpeg()
-        if not ffmpeg_executable:
-            logging.error("[DubbingFFmpeg] Không tìm thấy FFmpeg để thêm khoảng lặng.")
-            return False
+        # Dùng service FFmpeg tập trung
 
         if self.dub_stop_event.is_set():
             logging.info(f"[DubbingFFmpeg] Thêm khoảng lặng bị hủy cho '{os.path.basename(input_path)}' do yêu cầu dừng.")
@@ -27716,158 +27626,102 @@ class SubtitleApp(ctk.CTk):
             return True
         
         delay_value_str = str(int(silence_duration_ms))
-        command = [
-            ffmpeg_executable, "-y", "-i", os.path.abspath(input_path),
-            "-af", f"adelay={delay_value_str}|{delay_value_str}", # adelay chấp nhận all_delays hoặc individual channel delays
+        cmd_params = [
+            "-y", "-i", os.path.abspath(input_path),
+            "-af", f"adelay={delay_value_str}|{delay_value_str}",
             "-c:a", self.dub_DEFAULT_WAV_CODEC,
             "-ar", str(self.dub_TARGET_AUDIO_PROCESSING_SAMPLE_RATE),
             "-ac", str(self.dub_TARGET_AUDIO_PROCESSING_CHANNELS),
             os.path.abspath(output_path)
         ]
-        logging.info(f"[DubbingFFmpeg] Thêm khoảng lặng ({silence_duration_ms}ms): {' '.join(command)}")
-        process_to_run = None
+        logging.info(f"[DubbingFFmpeg] Thêm khoảng lặng ({silence_duration_ms}ms) (service): {' '.join(cmd_params)}")
         try:
-            creation_flags = subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
-            process_to_run = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creation_flags)
-            self.dub_current_ffmpeg_process = process_to_run # << LƯU >>
-            stdout, stderr = process_to_run.communicate(timeout=30)
-            return_code = process_to_run.returncode
-            
-            if self.dub_stop_event.is_set():
-                logging.info(f"[DubbingFFmpeg] Thêm khoảng lặng cho '{os.path.basename(input_path)}' có thể đã bị dừng.")
-                if process_to_run.poll() is None: process_to_run.terminate()
-                return False
-
-            if return_code != 0:
-                logging.error(f"[DubbingFFmpeg] Lỗi CalledProcessError khi thêm silence cho '{os.path.basename(input_path)}'. STDERR: {stderr.decode('utf-8', errors='ignore')[:250]}")
-                return False
+            ffmpeg_run_command(
+                cmd_params,
+                process_name="DubbingFFmpeg_AddLeadingSilence",
+                stop_event=self.dub_stop_event,
+                set_current_process=lambda p: setattr(self, 'dub_current_ffmpeg_process', p),
+                clear_current_process=lambda: setattr(self, 'dub_current_ffmpeg_process', None),
+                timeout_seconds=60,
+            )
             if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
                 logging.error(f"[DubbingFFmpeg] Lỗi thêm khoảng lặng: File output rỗng.")
                 return False
             return True
-        except subprocess.TimeoutExpired:
-            logging.error(f"[DubbingFFmpeg] Timeout khi thêm silence cho '{os.path.basename(input_path)}'.")
-            if process_to_run and process_to_run.poll() is None: process_to_run.kill()
-            return False
         except Exception as e_gen:
-            logging.error(f"[DubbingFFmpeg] Lỗi không mong muốn khi thêm silence: {e_gen}", exc_info=True)
-            if process_to_run and process_to_run.poll() is None: process_to_run.kill()
+            logging.error(f"[DubbingFFmpeg] Lỗi khi thêm khoảng lặng: {e_gen}", exc_info=True)
             return False
-        finally:
-            if self.dub_current_ffmpeg_process is process_to_run:
-                 self.dub_current_ffmpeg_process = None
-                 logging.debug(f"[DubbingFFmpeg] Đã reset dub_current_ffmpeg_process (add_silence).")
 
 
 # Hàm FFmpeg: Ghép nối các file audio WAV từ một file list
     def dub_ffmpeg_concatenate_audios(self, file_list_path, output_path):
-        ffmpeg_executable = find_ffmpeg()
-        if not ffmpeg_executable:
-            logging.error("[DubbingFFmpeg] Không tìm thấy FFmpeg để ghép audio.")
-            return False
+        # Dùng service FFmpeg tập trung
         
         if self.dub_stop_event.is_set(): # << KIỂM TRA DỪNG >>
             logging.info(f"[DubbingFFmpeg] Ghép audio bị hủy (file list: {os.path.basename(file_list_path)}) do yêu cầu dừng.")
             return False
 
-        command = [
-            ffmpeg_executable, "-y", "-f", "concat", "-safe", "0",
+        cmd_params = [
+            "-y", "-f", "concat", "-safe", "0",
             "-i", os.path.abspath(file_list_path),
             "-c:a", self.dub_DEFAULT_WAV_CODEC,
             "-ar", str(self.dub_TARGET_AUDIO_PROCESSING_SAMPLE_RATE),
             "-ac", str(self.dub_TARGET_AUDIO_PROCESSING_CHANNELS),
             os.path.abspath(output_path)
         ]
-        logging.info(f"[DubbingFFmpeg] Ghép Audio WAVs: {' '.join(command)}")
-        process_to_run = None
+        logging.info(f"[DubbingFFmpeg] Ghép Audio WAVs (service): {' '.join(cmd_params)}")
         try:
-            creation_flags = subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
-            process_to_run = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creation_flags)
-            self.dub_current_ffmpeg_process = process_to_run # << LƯU >>
-            stdout, stderr = process_to_run.communicate(timeout=180) # Có thể cần timeout dài hơn
-            return_code = process_to_run.returncode
-
-            if self.dub_stop_event.is_set(): # << KIỂM TRA DỪNG SAU CHẠY >>
-                logging.info(f"[DubbingFFmpeg] Ghép audio (file list: {os.path.basename(file_list_path)}) có thể đã bị dừng.")
-                if process_to_run.poll() is None: process_to_run.terminate()
-                return False
-
-            if return_code != 0:
-                logging.error(f"[DubbingFFmpeg] Lỗi CalledProcessError khi ghép WAV. STDERR: {stderr.decode('utf-8', errors='ignore')}")
-                return False
+            ffmpeg_run_command(
+                cmd_params,
+                process_name="DubbingFFmpeg_ConcatWAVs",
+                stop_event=self.dub_stop_event,
+                set_current_process=lambda p: setattr(self, 'dub_current_ffmpeg_process', p),
+                clear_current_process=lambda: setattr(self, 'dub_current_ffmpeg_process', None),
+                timeout_seconds=300,
+            )
             if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
                  logging.error(f"[DubbingFFmpeg] Lỗi ghép WAV: File output rỗng.")
                  return False
             logging.debug(f"[DubbingFFmpeg] Ghép WAV thành công: {os.path.basename(output_path)}")
             return True
-        except subprocess.TimeoutExpired:
-            logging.error(f"[DubbingFFmpeg] Timeout khi ghép WAV (file list: {os.path.basename(file_list_path)}).")
-            if process_to_run and process_to_run.poll() is None: process_to_run.kill()
-            return False
         except Exception as e_gen:
-            logging.error(f"[DubbingFFmpeg] Lỗi không mong muốn khi ghép WAV: {e_gen}", exc_info=True)
-            if process_to_run and process_to_run.poll() is None: process_to_run.kill()
+            logging.error(f"[DubbingFFmpeg] Lỗi khi ghép WAV: {e_gen}", exc_info=True)
             return False
-        finally:
-            if self.dub_current_ffmpeg_process is process_to_run:
-                self.dub_current_ffmpeg_process = None
-                logging.debug(f"[DubbingFFmpeg] Đã reset dub_current_ffmpeg_process (concatenate).")
 
 
 # Hàm FFmpeg: Chuyển đổi WAV sang MP3 và chuẩn hóa độ lớn
     def dub_ffmpeg_convert_wav_to_mp3_normalized(self, input_wav_path, output_mp3_path):
-        ffmpeg_executable = find_ffmpeg()
-        if not ffmpeg_executable:
-            logging.error("[DubbingFFmpeg] Không tìm thấy FFmpeg để chuyển đổi WAV sang MP3 (normalized).")
-            return False
-
-        if self.dub_stop_event.is_set(): # << KIỂM TRA DỪNG >>
+        if self.dub_stop_event.is_set():
             logging.info(f"[DubbingFFmpeg] Chuyển MP3 (norm) bị hủy cho '{os.path.basename(input_wav_path)}' do yêu cầu dừng.")
             return False
 
         loudnorm_filter = "loudnorm=I=-14:LRA=7:TP=-1.5:print_format=summary"
-        command = [
-            ffmpeg_executable, "-y", "-i", os.path.abspath(input_wav_path),
+        cmd_params = [
+            "-y", "-i", os.path.abspath(input_wav_path),
             "-af", loudnorm_filter, "-c:a", "libmp3lame",
             "-q:a", str(self.dub_DEFAULT_MP3_QUALITY),
             "-ar", str(self.dub_TARGET_AUDIO_PROCESSING_SAMPLE_RATE),
             "-ac", str(self.dub_TARGET_AUDIO_PROCESSING_CHANNELS),
             os.path.abspath(output_mp3_path)
         ]
-        logging.info(f"[DubbingFFmpeg] Chuyển WAV sang MP3 (Normalized): {' '.join(command)}")
-        process_to_run = None
+        logging.info(f"[DubbingFFmpeg] Chuyển WAV sang MP3 (Normalized) (service): {' '.join(cmd_params)}")
         try:
-            creation_flags = subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
-            process_to_run = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creation_flags)
-            self.dub_current_ffmpeg_process = process_to_run # << LƯU >>
-            stdout, stderr = process_to_run.communicate(timeout=180)
-            return_code = process_to_run.returncode
-            
-            if self.dub_stop_event.is_set():
-                logging.info(f"[DubbingFFmpeg] Chuyển MP3 (norm) cho '{os.path.basename(input_wav_path)}' có thể đã bị dừng.")
-                if process_to_run.poll() is None: process_to_run.terminate()
-                return False
-
-            if return_code != 0:
-                logging.error(f"[DubbingFFmpeg] Lỗi CalledProcessError khi chuyển MP3 (norm). STDERR: {stderr.decode('utf-8', errors='ignore')}")
-                return False
+            ffmpeg_run_command(
+                cmd_params,
+                process_name="DubbingFFmpeg_ConvertWAV2MP3_Norm",
+                stop_event=self.dub_stop_event,
+                set_current_process=lambda p: setattr(self, 'dub_current_ffmpeg_process', p),
+                clear_current_process=lambda: setattr(self, 'dub_current_ffmpeg_process', None),
+                timeout_seconds=300,
+            )
             if not os.path.exists(output_mp3_path) or os.path.getsize(output_mp3_path) == 0:
                  logging.error(f"[DubbingFFmpeg] Lỗi chuyển MP3 (norm): File output rỗng.")
                  return False
             logging.debug(f"[DubbingFFmpeg] Chuyển MP3 (normalized) thành công: {os.path.basename(output_mp3_path)}")
             return True
-        except subprocess.TimeoutExpired:
-            logging.error(f"[DubbingFFmpeg] Timeout khi chuyển MP3 (normalized) cho '{os.path.basename(input_wav_path)}'.")
-            if process_to_run and process_to_run.poll() is None: process_to_run.kill()
-            return False
         except Exception as e_gen:
-            logging.error(f"[DubbingFFmpeg] Lỗi không mong muốn khi chuyển MP3 (normalized): {e_gen}", exc_info=True)
-            if process_to_run and process_to_run.poll() is None: process_to_run.kill()
+            logging.error(f"[DubbingFFmpeg] Lỗi khi chuyển MP3 (normalized): {e_gen}", exc_info=True)
             return False
-        finally:
-            if self.dub_current_ffmpeg_process is process_to_run:
-                self.dub_current_ffmpeg_process = None
-                logging.debug(f"[DubbingFFmpeg] Đã reset dub_current_ffmpeg_process (convert_mp3_norm).")
 
 
 
@@ -27948,17 +27802,26 @@ class SubtitleApp(ctk.CTk):
                             temp_faded_path = os.path.join(self.temp_folder, f"faded_bgm_{bgm_base}_{uuid.uuid4().hex[:4]}{bgm_ext}")
                             temp_files_to_delete.append(temp_faded_path)
                             
-                            cmd_fade = [ffmpeg_executable, "-y", "-i", os.path.abspath(custom_bgm_path), "-af", f"afade=t=in:d={fade_in:.3f},afade=t=out:st={duration_s - fade_out:.3f}:d={fade_out:.3f}", temp_faded_path]
-                            
-                            proc_fade = subprocess.Popen(cmd_fade, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0)
-                            _, stderr_fade = proc_fade.communicate(timeout=120)
-                            
-                            if proc_fade.returncode == 0:
+                            cmd_params_bgm_fade = [
+                                "-y",
+                                "-i", os.path.abspath(custom_bgm_path),
+                                "-af", f"afade=t=in:d={fade_in:.3f},afade=t=out:st={duration_s - fade_out:.3f}:d={fade_out:.3f}",
+                                temp_faded_path,
+                            ]
+                            try:
+                                ffmpeg_run_command(
+                                    cmd_params_bgm_fade,
+                                    process_name=f"{worker_log_prefix}_BGMFade",
+                                    stop_event=self.dub_stop_event,
+                                    set_current_process=lambda p: setattr(self, 'dub_current_ffmpeg_process', p),
+                                    clear_current_process=lambda: setattr(self, 'dub_current_ffmpeg_process', None),
+                                    timeout_seconds=150,
+                                )
                                 final_bgm_path_for_mux = temp_faded_path
                                 logging.info(f"{worker_log_prefix} Tiền xử lý fade cho BGM thành công: {os.path.basename(temp_faded_path)}")
-                            else:
+                            except Exception as e_bgmfade:
                                 final_bgm_path_for_mux = custom_bgm_path
-                                logging.warning(f"{worker_log_prefix} Lỗi tiền xử lý fade cho BGM. Dùng file gốc. Stderr: {stderr_fade.decode('utf-8','ignore')[:200]}")
+                                logging.warning(f"{worker_log_prefix} Lỗi tiền xử lý fade cho BGM. Dùng file gốc. Lý do: {e_bgmfade}")
                         else:
                             final_bgm_path_for_mux = custom_bgm_path
                             logging.info(f"{worker_log_prefix} BGM quá ngắn để fade, dùng file gốc.")
@@ -29476,15 +29339,21 @@ class SubtitleApp(ctk.CTk):
             ])
             
             # --- Bước C: Thực thi lệnh ---
-            logging.info(f"{worker_log_prefix} Lệnh FFmpeg cuối cùng (acrossfade): {' '.join(command)}")
-            process_to_run = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0)
-            self.dub_current_ffmpeg_process = process_to_run
-            _, stderr_bytes = process_to_run.communicate(timeout=600)
+            logging.info(f"{worker_log_prefix} Lệnh FFmpeg cuối cùng (acrossfade) (service): {' '.join(command[1:])}")
+            try:
+                ffmpeg_run_command(
+                    command[1:],
+                    process_name=f"{worker_log_prefix}_Acrossfade",
+                    stop_event=self.dub_stop_event,
+                    set_current_process=lambda p: setattr(self, 'dub_current_ffmpeg_process', p),
+                    clear_current_process=lambda: setattr(self, 'dub_current_ffmpeg_process', None),
+                    timeout_seconds=600,
+                )
+            except Exception as e:
+                raise RuntimeError(f"FFmpeg (ghép BGM với acrossfade) thất bại: {e}")
 
-            if self.dub_stop_event.is_set(): raise InterruptedError("Dừng trong lúc ghép BGM với acrossfade")
-            
-            if process_to_run.returncode != 0:
-                raise RuntimeError(f"FFmpeg (ghép BGM với acrossfade) thất bại. Lỗi: {stderr_bytes.decode('utf-8', 'ignore')[:500]}")
+            if self.dub_stop_event.is_set():
+                raise InterruptedError("Dừng trong lúc ghép BGM với acrossfade")
             
             return final_output_path, temp_files_created 
 
@@ -29500,18 +29369,15 @@ class SubtitleApp(ctk.CTk):
         Hàm này được tối ưu để xử lý nhạc nền.
         """
         worker_log_prefix = f"[{threading.current_thread().name}_NormalizeSingleBGM]"
-        ffmpeg_executable = find_ffmpeg()
-        if not ffmpeg_executable:
-            logging.error(f"{worker_log_prefix} Không tìm thấy FFmpeg.")
-            return False
+        # Dùng service FFmpeg tập trung
 
         if self.dub_stop_event.is_set():
             logging.info(f"{worker_log_prefix} Bị hủy do yêu cầu dừng.")
             return False
 
         loudnorm_filter = f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11:print_format=summary"
-        command = [
-            ffmpeg_executable, "-y",
+        cmd_params = [
+            "-y",
             "-i", os.path.abspath(input_path),
             "-af", loudnorm_filter,
             "-c:a", self.dub_DEFAULT_WAV_CODEC,
@@ -29519,28 +29385,19 @@ class SubtitleApp(ctk.CTk):
             "-ac", str(self.dub_TARGET_AUDIO_PROCESSING_CHANNELS),
             os.path.abspath(output_wav_path)
         ]
-        
-        logging.info(f"{worker_log_prefix} Chuẩn hóa '{os.path.basename(input_path)}' sang WAV (LUFS={target_lufs})...")
-        process_to_run = None
+        logging.info(f"{worker_log_prefix} Chuẩn hóa '{os.path.basename(input_path)}' sang WAV (LUFS={target_lufs}) (service)...")
         try:
-            creation_flags = subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
-            process_to_run = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creation_flags)
-            
-            # Không lưu tiến trình này vào self.dub_current_ffmpeg_process vì nó là một tác vụ con nhỏ
-            _, stderr_bytes = process_to_run.communicate(timeout=180) # Timeout 3 phút
-            
-            if self.dub_stop_event.is_set():
-                if process_to_run.poll() is None: process_to_run.terminate()
-                return False
-
-            if process_to_run.returncode != 0:
-                logging.error(f"{worker_log_prefix} Lỗi chuẩn hóa audio (Code: {process_to_run.returncode}). STDERR: {stderr_bytes.decode('utf-8', 'ignore')[:500]}")
-                return False
-                
+            ffmpeg_run_command(
+                cmd_params,
+                process_name=f"{worker_log_prefix}_NormalizeWAV",
+                stop_event=self.dub_stop_event,
+                set_current_process=lambda p: setattr(self, 'dub_current_ffmpeg_process', p),
+                clear_current_process=lambda: setattr(self, 'dub_current_ffmpeg_process', None),
+                timeout_seconds=180,
+            )
             return True
         except Exception as e:
-            logging.error(f"{worker_log_prefix} Lỗi không mong muốn khi chuẩn hóa audio: {e}", exc_info=True)
-            if process_to_run and process_to_run.poll() is None: process_to_run.kill()
+            logging.error(f"{worker_log_prefix} Lỗi khi chuẩn hóa audio: {e}", exc_info=True)
             return False
 
 #------------------------------------------------------------------
@@ -30171,28 +30028,23 @@ class SubtitleApp(ctk.CTk):
                 temp_output_video_with_logo_path = os.path.join(temp_dir_for_branding, f"{output_logo_temp_basename}.mp4")
                 ffmpeg_logo_cmd_full_inner.extend(["-c:s", "mov_text", "-shortest", temp_output_video_with_logo_path])
                 
-                process_ffmpeg_logo_inner = None
                 try:
-                    process_ffmpeg_logo_inner = subprocess.Popen(ffmpeg_logo_cmd_full_inner, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
-                    self.current_process = process_ffmpeg_logo_inner
-                    _, stderr_logo_inner = process_ffmpeg_logo_inner.communicate(timeout=1800)
-                    if self.stop_event.is_set():
-                        if process_ffmpeg_logo_inner.poll() is None: process_ffmpeg_logo_inner.terminate()
-                        raise InterruptedError("Dừng ở bước chèn logo")
-                    if process_ffmpeg_logo_inner.returncode != 0: raise RuntimeError(f"FFmpeg (chèn logo) thất bại. STDERR: {stderr_logo_inner}")
-                    if not os.path.exists(temp_output_video_with_logo_path) or os.path.getsize(temp_output_video_with_logo_path) < 1024: raise RuntimeError("FFmpeg (chèn logo): File output logo không hợp lệ.")
+                    cmd_params_logo = ffmpeg_logo_cmd_full_inner[1:]  # bỏ executable, giữ tham số
+                    ffmpeg_run_command(
+                        cmd_params_logo,
+                        process_name=f"Branding_ApplyLogo_{os.path.basename(input_video_for_logo)}",
+                        stop_event=self.stop_event if hasattr(self, 'stop_event') else None,
+                        set_current_process=lambda p: setattr(self, 'current_process', p),
+                        clear_current_process=lambda: setattr(self, 'current_process', None),
+                        timeout_seconds=1800,
+                    )
+                    if not os.path.exists(temp_output_video_with_logo_path) or os.path.getsize(temp_output_video_with_logo_path) < 1024:
+                        raise RuntimeError("FFmpeg (chèn logo): File output logo không hợp lệ.")
                     if os.path.abspath(input_video_for_logo) != os.path.abspath(input_video_path) and input_video_for_logo not in intermediate_files_to_delete:
                         intermediate_files_to_delete.append(input_video_for_logo)
                     return temp_output_video_with_logo_path
-                except InterruptedError: raise
-                except subprocess.TimeoutExpired:
-                    if process_ffmpeg_logo_inner and process_ffmpeg_logo_inner.poll() is None: process_ffmpeg_logo_inner.kill()
-                    raise RuntimeError("FFmpeg (chèn logo) timeout.")
                 except Exception as e_logo_apply:
-                    if process_ffmpeg_logo_inner and process_ffmpeg_logo_inner.poll() is None: process_ffmpeg_logo_inner.kill()
-                    raise RuntimeError(f"Lỗi không xác định khi chèn logo: {e_logo_apply}")
-                finally:
-                    if self.current_process is process_ffmpeg_logo_inner: self.current_process = None
+                    raise RuntimeError(f"Lỗi khi chèn logo: {e_logo_apply}")
 
             # --- Helper function lấy thời lượng (GIỮ NGUYÊN CODE GỐC CỦA BẠN) ---
             def get_video_duration_s(video_path_to_probe, ffprobe_exe_path):
@@ -30415,30 +30267,25 @@ class SubtitleApp(ctk.CTk):
                     
                     process_concat_final_run = None
                     try:
-                        process_concat_final_run = subprocess.Popen(ffmpeg_concat_filter_final_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
-                        if hasattr(self, 'current_process'): self.current_process = process_concat_final_run
-                        _, stderr_cf_final_run = process_concat_final_run.communicate(timeout=3600)
-                        if self.stop_event.is_set():
-                            if process_concat_final_run.poll() is None:
-                                process_concat_final_run.terminate()
-                                try: process_concat_final_run.wait(timeout=5)
-                                except subprocess.TimeoutExpired: process_concat_final_run.kill()
-                            raise InterruptedError("Dừng ở bước concat filter cuối (sau communicate)")
-                        if process_concat_final_run.returncode != 0: raise RuntimeError(f"FFmpeg (concat filter cuối) thất bại. STDERR: {stderr_cf_final_run}")
+                        process_concat_final_run = None
+                        cmd_params_concat_final = ffmpeg_concat_filter_final_cmd[1:]
+                        ffmpeg_run_command(
+                            cmd_params_concat_final,
+                            process_name="Branding_FinalConcat",
+                            stop_event=self.stop_event if hasattr(self, 'stop_event') else None,
+                            set_current_process=lambda p: setattr(self, 'current_process', p),
+                            clear_current_process=lambda: setattr(self, 'current_process', None),
+                            timeout_seconds=3600,
+                        )
                         if not os.path.exists(final_output_path_suggestion) or os.path.getsize(final_output_path_suggestion) < 1024: raise RuntimeError("FFmpeg (concat filter cuối): File output không hợp lệ hoặc quá nhỏ.")
                         processed_video_path_after_last_step = final_output_path_suggestion
                         logging.info(f"Branding Worker - Concat Filter cuối thành công: {final_output_path_suggestion}")
                     except InterruptedError: raise
-                    except subprocess.TimeoutExpired:
-                        logging.error("Branding Worker: FFmpeg (concat filter cuối) timeout.")
-                        if process_concat_final_run and process_concat_final_run.poll() is None: process_concat_final_run.kill()
-                        raise RuntimeError("FFmpeg (concat filter cuối) timeout.")
                     except Exception as e_cf_final_run_step:
                         logging.error(f"Branding Worker: Lỗi trong bước concat filter cuối: {e_cf_final_run_step}", exc_info=True)
-                        if process_concat_final_run and process_concat_final_run.poll() is None: process_concat_final_run.kill()
                         raise RuntimeError(f"Lỗi concat filter cuối: {e_cf_final_run_step}")
                     finally:
-                        if hasattr(self, 'current_process') and self.current_process is process_concat_final_run: self.current_process = None
+                        if hasattr(self, 'current_process'): self.current_process = None
                 
                 elif len(videos_to_concat_paths) == 1:
                     processed_video_path_after_last_step = videos_to_concat_paths[0]

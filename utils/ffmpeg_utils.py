@@ -118,17 +118,15 @@ def ffmpeg_split_media(input_path, output_folder, segment_duration_seconds=900):
         List of created segment file paths, or None if failed
     """
     log_prefix = f"[{threading.current_thread().name}_SplitMedia]"
-    ffmpeg_executable = find_ffmpeg()
-    if not ffmpeg_executable:
-        logging.error(f"{log_prefix} Không tìm thấy FFmpeg.")
-        return None
+    # Sử dụng services.ffmpeg_service để chạy FFmpeg tập trung
+    from services.ffmpeg_service import run_ffmpeg_command
 
     base_name, ext = os.path.splitext(os.path.basename(input_path))
     safe_base_name = create_safe_filename(base_name, remove_accents=False)
     output_pattern = os.path.join(output_folder, f"{safe_base_name}_part_%03d{ext}")
 
-    command = [
-        ffmpeg_executable, "-y",
+    cmd_params = [
+        "-y",
         "-i", os.path.abspath(input_path),
         "-c", "copy",          # Sao chép codec, không mã hóa lại, rất nhanh
         "-map", "0",           # Sao chép tất cả các luồng (video, audio, sub...)
@@ -140,7 +138,11 @@ def ffmpeg_split_media(input_path, output_folder, segment_duration_seconds=900):
 
     logging.info(f"{log_prefix} Bắt đầu chia file '{base_name}' thành các đoạn {segment_duration_seconds}s...")
     try:
-        process = subprocess.run(command, capture_output=True, text=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
+        return_code, stdout_data, stderr_data = run_ffmpeg_command(
+            cmd_params=cmd_params,
+            process_name="FFmpegSplitMedia",
+            timeout_seconds=1800,
+        )
         
         # Tìm các file đã được tạo ra
         created_files = sorted([

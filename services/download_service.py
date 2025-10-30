@@ -1,4 +1,86 @@
 """
+Download service helpers for running yt-dlp with streaming stdout.
+"""
+
+import logging
+import os
+import subprocess
+import sys
+from typing import Callable, Generator, Iterable, List, Optional, Sequence
+
+
+def stream_process_output(
+    full_cmd: Sequence[str],
+    *,
+    process_name: str = "yt-dlp",
+    hide_console_window: bool = True,
+    set_current_process: Optional[Callable[[subprocess.Popen], None]] = None,
+    clear_current_process: Optional[Callable[[], None]] = None,
+) -> Generator[str, None, int]:
+    """
+    Spawn a subprocess and yield stdout lines as they arrive.
+
+    Args:
+        full_cmd: Complete command list (program + args)
+        process_name: Label for logs
+        hide_console_window: On Windows, create the process with no window
+        set_current_process: Optional callback to expose the Popen object
+        clear_current_process: Optional callback to clear process reference
+
+    Yields:
+        Lines (str) from combined stdout/stderr stream.
+
+    Returns:
+        Process return code (via StopIteration.value)
+    """
+    startupinfo = None
+    creationflags = 0
+    if hide_console_window and os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        creationflags = subprocess.CREATE_NO_WINDOW
+
+    logging.info(f"[{process_name}] Spawning: {subprocess.list2cmdline(list(full_cmd))}")
+    proc: Optional[subprocess.Popen] = None
+    try:
+        proc = subprocess.Popen(
+            list(full_cmd),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            universal_newlines=True,
+            startupinfo=startupinfo,
+            creationflags=creationflags,
+        )
+        if set_current_process:
+            try:
+                set_current_process(proc)
+            except Exception:
+                logging.debug("set_current_process callback error, continuing.")
+
+        logging.info(f"[{process_name}] Started (PID: {proc.pid})")
+
+        # Stream stdout
+        assert proc.stdout is not None
+        for line in iter(proc.stdout.readline, ""):
+            yield line
+
+        # End of stream: wait for return code
+        rc = proc.wait(timeout=900)
+        logging.info(f"[{process_name}] Exited with code {rc}")
+        return rc
+
+    finally:
+        try:
+            if clear_current_process:
+                clear_current_process()
+        except Exception:
+            logging.debug("clear_current_process callback error, continuing.")
+"""
 Download Service for Piu Application
 
 This service handles YouTube video download using yt-dlp.

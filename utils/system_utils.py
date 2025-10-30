@@ -10,7 +10,16 @@ import subprocess
 import logging
 import re
 import psutil
-from typing import Tuple
+from typing import Tuple, Optional
+
+try:
+    import ctypes
+    import ctypes.wintypes as wintypes
+    HAS_CTYPES = True
+except Exception:
+    HAS_CTYPES = False
+
+from exceptions.app_exceptions import SingleInstanceException
 
 
 def normalize_hwid_string(s: str) -> str:
@@ -254,3 +263,73 @@ def cleanup_stale_chrome_processes(user_data_dir: str) -> bool:
         logging.info(f"{worker_log_prefix} Không tìm thấy tiến trình Chrome cũ nào cần dọn dẹp.")
     
     return found_and_killed_process
+
+
+def ensure_single_instance(app_mutex_name: str) -> Optional[int]:
+    """
+    Ensure only one instance of the app is running using a system-wide mutex (Windows).
+    Returns a handle (int) to the mutex on success, or raises SingleInstanceException if another instance exists.
+    On non-Windows, returns None (no-op).
+    """
+    if os.name != 'nt' or not HAS_CTYPES:
+        logging.debug("ensure_single_instance: non-Windows or ctypes unavailable; skipping mutex.")
+        return None
+
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    CreateMutexW = kernel32.CreateMutexW
+    CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+    CreateMutexW.restype = wintypes.HANDLE
+
+    GetLastError = kernel32.GetLastError
+    ERROR_ALREADY_EXISTS = 183
+
+    handle = CreateMutexW(None, wintypes.BOOL(False), app_mutex_name)
+    if not handle:
+        err = ctypes.get_last_error()
+        logging.error(f"CreateMutexW failed with error {err}")
+        raise SingleInstanceException("Không thể tạo mutex ứng dụng.")
+
+    last_error = GetLastError()
+    if last_error == ERROR_ALREADY_EXISTS:
+        logging.error("Một phiên bản ứng dụng khác đang chạy (mutex đã tồn tại).")
+        raise SingleInstanceException("Ứng dụng đã chạy trước đó.")
+
+    logging.info("Đã tạo mutex phiên bản ứng dụng thành công.")
+    return int(handle)
+
+
+def release_mutex(handle: Optional[int]) -> None:
+    """
+    Release a previously acquired mutex handle (Windows).
+    """
+    if os.name != 'nt' or not HAS_CTYPES or not handle:
+        return
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel32.CloseHandle(wintypes.HANDLE(handle))
+
+
+def terminate_process_tree(pid: int, timeout_seconds: int = 5) -> bool:
+    """
+    Terminate a process and its children by PID using psutil. Returns True if terminated.
+    """
+    try:
+        proc = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        return True
+    children = proc.children(recursive=True)
+    for c in children:
+        try:
+            c.terminate()
+        except Exception:
+            pass
+    try:
+        proc.terminate()
+    except Exception:
+        pass
+    gone, alive = psutil.wait_procs([proc] + children, timeout=timeout_seconds)
+    for p in alive:
+        try:
+            p.kill()
+        except Exception:
+            pass
+    return True

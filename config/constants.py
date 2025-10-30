@@ -239,8 +239,7 @@ DEFAULT_SUBTITLE_MARGIN_V = 60
 # CÁC HẰNG SỐ ĐƯỢC DI CHUYỂN TỪ PIU.PY
 # ==========================
 
-# Tên Mutex duy nhất cho ứng dụng
-APP_MUTEX_NAME = f"Global\\{{PiuApp_{APP_NAME}_{APP_AUTHOR}_Mutex_v1}}"
+# Tên Mutex duy nhất cho ứng dụng (đã được định nghĩa phía trên - tránh trùng lặp)
 
 # --- Từ điển ánh xạ mã ngôn ngữ sang tên tiếng Việt ---
 LANGUAGE_MAP_VI = {
