@@ -11,6 +11,7 @@ from config.ui_constants import get_theme_colors
 from ui.widgets.tooltip import Tooltip
 from ui.widgets.menu_utils import textbox_right_click_menu
 from ui.widgets.custom_voice_dropdown import CustomVoiceDropdown
+from services.tts_service import TTSService
 
 # Import các hàm tiện ích
 from utils.helpers import open_file_with_default_app, get_default_downloads_folder
@@ -196,6 +197,25 @@ class DubbingTab(ctk.CTkFrame):
         )
         self.dub_voice_option_menu.grid(row=0, column=1, sticky="ew")
 
+        # Expose widgets/frames to master_app so existing handlers (in main app) can access them
+        # This keeps backward compatibility with logic that references these attributes on the app instance
+        self.master_app.dub_voice_option_menu = self.dub_voice_option_menu
+        self.master_app.voice_row_frame_ref = self.voice_row_frame_ref
+        self.master_app.ssml_row_frame = self.ssml_row_frame
+        self.master_app.dub_tts_controls_frame = self.dub_tts_controls_frame
+
+        # Optional: warm up Google TTS voices cache in background (non-blocking)
+        def _warm_google_cache():
+            try:
+                key_path = getattr(self.master_app, 'google_key_path_var', None)
+                key_path_val = key_path.get() if key_path else None
+                if key_path_val and os.path.exists(key_path_val):
+                    tts = TTSService(cache_dir=os.getcwd())
+                    tts.get_google_voices(key_json_path=key_path_val, prefer_cache=True)
+            except Exception:
+                pass
+        self.after(200, _warm_google_cache)
+
         # --- KHUNG BÊN PHẢI ---
         self._create_dubbing_right_panel(
             main_frame_dub, panel_bg_color, card_bg_color, textbox_bg_color,
@@ -311,6 +331,9 @@ class DubbingTab(ctk.CTkFrame):
         
         dub_output_buttons_container = ctk.CTkFrame(dub_output_config_frame, fg_color="transparent")
         dub_output_buttons_container.pack(fill="x", padx=10, pady=(0, 5))
+        # Use grid so the two buttons expand evenly across available width
+        dub_output_buttons_container.grid_columnconfigure(0, weight=1)
+        dub_output_buttons_container.grid_columnconfigure(1, weight=1)
         
         self.dub_select_output_dir_button = ctk.CTkButton(
             dub_output_buttons_container, 
@@ -319,7 +342,7 @@ class DubbingTab(ctk.CTkFrame):
             font=("Poppins", 12), 
             command=self.master_app.dub_select_output_dir
         )
-        self.dub_select_output_dir_button.pack(side="left", padx=(0, 5))
+        self.dub_select_output_dir_button.grid(row=0, column=0, padx=(0, 5), sticky="ew")
         
         self.dub_btn_open_output_folder_left = ctk.CTkButton(
             dub_output_buttons_container, 
@@ -328,7 +351,7 @@ class DubbingTab(ctk.CTkFrame):
             font=("Poppins", 12), 
             command=self.master_app.dub_open_output_folder
         )
-        self.dub_btn_open_output_folder_left.pack(side="left")
+        self.dub_btn_open_output_folder_left.grid(row=0, column=1, sticky="ew")
         
         ctk.CTkLabel(
             dub_output_config_frame, 
@@ -428,10 +451,15 @@ class DubbingTab(ctk.CTkFrame):
             checkbox_height=18
         )
         self.dub_chk_use_google_ssml.pack(anchor="w")
+        # Expose checkbox to master_app so app-level logic can update its state/text
+        self.master_app.dub_chk_use_google_ssml = self.dub_chk_use_google_ssml
         
         # API and Branding buttons
         api_button_row_frame = ctk.CTkFrame(self.dub_tts_controls_frame, fg_color="transparent")
         api_button_row_frame.pack(fill="x", padx=10, pady=(5,8))
+        # Use grid so both buttons expand evenly
+        api_button_row_frame.grid_columnconfigure(0, weight=1)
+        api_button_row_frame.grid_columnconfigure(1, weight=1)
         
         self.api_settings_button_dub_tab = ctk.CTkButton(
             api_button_row_frame, 
@@ -442,7 +470,7 @@ class DubbingTab(ctk.CTkFrame):
             fg_color=special_action_button_color, 
             hover_color=special_action_hover_color
         )
-        self.api_settings_button_dub_tab.pack(side="left", padx=(0,5))
+        self.api_settings_button_dub_tab.grid(row=0, column=0, padx=(0,5), sticky="ew")
         
         self.branding_settings_button_dub_tab = ctk.CTkButton(
             api_button_row_frame, 
@@ -451,7 +479,7 @@ class DubbingTab(ctk.CTkFrame):
             font=("Poppins", 13), 
             command=self.master_app.open_branding_settings_window
         )
-        self.branding_settings_button_dub_tab.pack(side="left")
+        self.branding_settings_button_dub_tab.grid(row=0, column=1, sticky="ew")
         
         return self.dub_tts_controls_frame
 

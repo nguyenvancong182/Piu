@@ -75,6 +75,7 @@ from ui.tabs.ai_editor_tab import AIEditorTab
 from ui.tabs.download_tab import DownloadTab
 from ui.tabs.subtitle_tab import SubtitleTab
 from ui.tabs.dubbing_tab import DubbingTab
+from ui.tabs.youtube_upload_tab import YouTubeUploadTab
 from utils.logging_utils import setup_logging, log_failed_task
 from ui.utils.ui_helpers import is_ui_alive, safe_after, update_path_label, norm_no_diacritics, is_readyish, locked_msg_for_view, ready_msg_for_view
 from services.youtube_upload_service import upload_youtube_thumbnail, get_playlist_id_by_name, add_video_to_playlist
@@ -1230,7 +1231,7 @@ class SubtitleApp(ctk.CTk):
         # [Tùy chọn Slideshow từ Thư mục Ảnh]
         self.dub_use_image_folder_var = ctk.BooleanVar(value=self.cfg.get("dub_use_image_folder", False))
         self.dub_selected_image_folder_path_var = ctk.StringVar(value=self.cfg.get("dub_slideshow_image_folder", ""))
-        # Các widget UI sẽ được tạo trong _create_dubbing_tab
+        # Các widget UI được tạo trong DubbingTab (ui/tabs/dubbing_tab.py)
         self.dub_slideshow_folder_frame = None
         self.dub_chk_use_image_folder = None
         self.dub_btn_browse_image_folder = None
@@ -1708,12 +1709,9 @@ class SubtitleApp(ctk.CTk):
         self.subtitle_view_frame = SubtitleTab(master=self.main_content_frame, master_app=self)
         self.download_view_frame = DownloadTab(master=self.main_content_frame, master_app=self)
         self.dubbing_view_frame = DubbingTab(master=self.main_content_frame, master_app=self)
-        self.youtube_upload_view_frame = ctk.CTkFrame(self.main_content_frame, fg_color="transparent")
+        self.youtube_upload_view_frame = YouTubeUploadTab(master=self.main_content_frame, master_app=self)
         
         self.ai_editor_view_frame = AIEditorTab(master=self.main_content_frame, master_app=self)
-        
-        # Gọi các hàm để tạo nội dung cho từng tab
-        self._create_youtube_upload_tab(self.youtube_upload_view_frame) 
         
         # --- 4. THANH FOOTER (PHIÊN BẢN TỐI ƯU VÀ HOÀN CHỈNH) ---
         footer_frame = ctk.CTkFrame(self, height=35)
@@ -1865,596 +1863,38 @@ class SubtitleApp(ctk.CTk):
         logging.debug("Khởi tạo UI (tối ưu) hoàn tất.")
 
 
-#===========================================================================================================================================================================
-# HÀM DỰNG GIAO DIỆN: TẠO CÁC THÀNH PHẦN UI CHO TAB 'TẠO PHỤ ĐỀ' - ĐÃ REFACTOR SANG SubtitleTab (ui/tabs/subtitle_tab.py)
-# Các hàm _create_subtitle_* đã được di chuyển vào class SubtitleTab
-
-#===========================================================================================================================================================================
-# HÀM DỰNG GIAO DIỆN: TẠO CÁC THÀNH PHẦN UI CHO TAB 'THUYẾT MINH' - ĐÃ REFACTOR SANG DubbingTab (ui/tabs/dubbing_tab.py)
-# Các hàm _create_dubbing_* đã được di chuyển vào class DubbingTab
-
 # ==========================================================================================================================================================================================
-
-# HÀM DỰNG GIAO DIỆN: TẠO CÁC THÀNH PHẦN UI CHO TAB 'Upload YouTube'
-
-    def _create_youtube_upload_tab(self, parent_frame):
-        """
-        Tạo các thành phần UI cho chế độ xem 'Upload YouTube'.
-        (PHIÊN BẢN CẬP NHẬT 3: Checkbox Auto-Upload có khung nền riêng)
-        """
-        logging.debug("[YouTubeUploadUI] Đang tạo UI cho tab Upload YouTube...")
-
-        colors = get_theme_colors()
-        panel_bg_color = colors["panel_bg"]
-        card_bg_color = colors["card_bg"]
-        textbox_bg_color = colors["textbox_bg"]
-        danger_button_color = colors["danger_button"]
-        danger_button_hover_color = colors["danger_button_hover"]
-        special_action_button_color = colors["special_action_button"]
-        special_action_hover_color = colors["special_action_hover"]
-
-        main_frame_upload = ctk.CTkFrame(parent_frame, fg_color="transparent")
-        main_frame_upload.pack(fill="both", expand=True)
-        
-        main_frame_upload.grid_columnconfigure(0, weight=1, uniform="panelgroup")
-        main_frame_upload.grid_columnconfigure(1, weight=2, uniform="panelgroup")
-        main_frame_upload.grid_rowconfigure(0, weight=1)
-
-        left_panel_upload_container = ctk.CTkFrame(main_frame_upload, fg_color=panel_bg_color, corner_radius=12)
-        left_panel_upload_container.grid(row=0, column=0, padx=(0, 10), pady=0, sticky="nsew")
-        left_panel_upload_container.pack_propagate(False)
-
-        left_upload_scrollable_content = ctk.CTkScrollableFrame(
-            left_panel_upload_container,
-            fg_color="transparent"
-        )
-        left_upload_scrollable_content.pack(expand=True, fill="both", padx=0, pady=0)
-
-        # === CỤM NÚT HÀNH ĐỘNG CHÍNH (UPLOAD) ===
-        self._create_youtube_action_buttons_section(left_upload_scrollable_content, danger_button_color, danger_button_hover_color)
-
-        # Auto-upload checkbox
-        self._create_youtube_auto_upload_section(left_upload_scrollable_content, card_bg_color)
-
-        # Thumbnail selection
-        self._create_youtube_thumbnail_section(left_upload_scrollable_content, card_bg_color)
-
-        # Video information section
-        self._create_youtube_video_info_section(left_upload_scrollable_content, card_bg_color)
-
-        # Upload method section
-        self._create_youtube_upload_method_section(left_upload_scrollable_content, card_bg_color)
-
-        # Right panel with queue, log, and progress
-        self._create_youtube_right_panel(main_frame_upload, panel_bg_color, textbox_bg_color)
-        
-        logging.debug("[YouTubeUploadUI] Tạo UI cho tab Upload YouTube hoàn tất.")
-        self.after(100, self._update_youtube_ui_state, False)
-
+# CÁC TAB UI ĐÃ ĐƯỢC REFACTOR SANG CÁC FILE RIÊNG:
+# - SubtitleTab: ui/tabs/subtitle_tab.py
+# - DubbingTab: ui/tabs/dubbing_tab.py
+# - DownloadTab: ui/tabs/download_tab.py
+# - YouTubeUploadTab: ui/tabs/youtube_upload_tab.py
+# - AIEditorTab: ui/tabs/ai_editor_tab.py
 # ==========================================================================================================================================================================================
-
-# HÀM DỰNG GIAO DIỆN: TẠO CÁC THÀNH PHẦN UI CHO TAB 'Upload YouTube'
-
-    def _create_youtube_upload_tab(self, parent_frame):
-        """
-        Tạo các thành phần UI cho chế độ xem 'Upload YouTube'.
-        (PHIÊN BẢN CẬP NHẬT 3: Checkbox Auto-Upload có khung nền riêng)
-        """
-        logging.debug("[YouTubeUploadUI] Đang tạo UI cho tab Upload YouTube...")
-
-        colors = get_theme_colors()
-        panel_bg_color = colors["panel_bg"]
-        card_bg_color = colors["card_bg"]
-        textbox_bg_color = colors["textbox_bg"]
-        danger_button_color = colors["danger_button"]
-        danger_button_hover_color = colors["danger_button_hover"]
-        special_action_button_color = colors["special_action_button"]
-        special_action_hover_color = colors["special_action_hover"]
-
-        main_frame_upload = ctk.CTkFrame(parent_frame, fg_color="transparent")
-        main_frame_upload.pack(fill="both", expand=True)
-        
-        main_frame_upload.grid_columnconfigure(0, weight=1, uniform="panelgroup")
-        main_frame_upload.grid_columnconfigure(1, weight=2, uniform="panelgroup")
-        main_frame_upload.grid_rowconfigure(0, weight=1)
-        
-        left_panel_upload_container = ctk.CTkFrame(main_frame_upload, fg_color=panel_bg_color, corner_radius=12)
-        left_panel_upload_container.grid(row=0, column=0, padx=(0, 10), pady=0, sticky="nsew")
-        
-        right_panel_upload = ctk.CTkFrame(main_frame_upload, fg_color=panel_bg_color, corner_radius=12)
-        right_panel_upload.grid(row=0, column=1, pady=0, sticky="nsew")
-        
-        # Left panel content...
-        upload_left_scrollable = ctk.CTkScrollableFrame(left_panel_upload_container, fg_color="transparent")
-        upload_left_scrollable.pack(expand=True, fill="both", padx=0, pady=0)
-        
-        right_panel_upload.grid_rowconfigure(1, weight=1)
-        right_panel_upload.grid_columnconfigure(0, weight=1)
-
-        # Create sections
-        self._create_youtube_action_buttons_section(upload_left_scrollable, danger_button_color, danger_button_hover_color)
-        self._create_youtube_left_panel(upload_left_scrollable, card_bg_color, special_action_button_color, special_action_hover_color)
-        self._create_youtube_right_panel(main_frame_upload, panel_bg_color, textbox_bg_color)
-        
-        logging.debug("[YouTubeUploadUI] Tạo UI cho tab Upload YouTube hoàn tất.")
-        self.after(100, self._update_youtube_ui_state, False)
-
-# ==========================================================================================================================================================================================
-
-# HÀM DỰNG GIAO DIỆN: TẠO CÁC THÀNH PHẦN UI CHO TAB 'Upload YouTube'
-
-    def _create_youtube_upload_tab(self, parent_frame):
-        """
-        Tạo các thành phần UI cho chế độ xem 'Upload YouTube'.
-        (PHIÊN BẢN CẬP NHẬT 3: Checkbox Auto-Upload có khung nền riêng)
-        """
-        logging.debug("[YouTubeUploadUI] Đang tạo UI cho tab Upload YouTube...")
-
-        colors = get_theme_colors()
-        panel_bg_color = colors["panel_bg"]
-        card_bg_color = colors["card_bg"]
-        textbox_bg_color = colors["textbox_bg"]
-        danger_button_color = colors["danger_button"]
-        danger_button_hover_color = colors["danger_button_hover"]
-        special_action_button_color = colors["special_action_button"]
-        special_action_hover_color = colors["special_action_hover"]
-
-        main_frame_upload = ctk.CTkFrame(parent_frame, fg_color="transparent")
-        main_frame_upload.pack(fill="both", expand=True)
-        
-        main_frame_upload.grid_columnconfigure(0, weight=1, uniform="panelgroup")
-        main_frame_upload.grid_columnconfigure(1, weight=2, uniform="panelgroup")
-        main_frame_upload.grid_rowconfigure(0, weight=1)
-        
-        left_panel_upload_container = ctk.CTkFrame(main_frame_upload, fg_color=panel_bg_color, corner_radius=12)
-        left_panel_upload_container.grid(row=0, column=0, padx=(0, 10), pady=0, sticky="nsew")
-        
-        right_panel_upload = ctk.CTkFrame(main_frame_upload, fg_color=panel_bg_color, corner_radius=12)
-        right_panel_upload.grid(row=0, column=1, pady=0, sticky="nsew")
-        
-        # Left panel content...
-        upload_left_scrollable = ctk.CTkScrollableFrame(left_panel_upload_container, fg_color="transparent")
-        upload_left_scrollable.pack(expand=True, fill="both", padx=0, pady=0)
-        
-        right_panel_upload.grid_rowconfigure(1, weight=1)
-        right_panel_upload.grid_columnconfigure(0, weight=1)
-
-        # Create sections
-        self._create_youtube_action_buttons_section(upload_left_scrollable, danger_button_color, danger_button_hover_color)
-        self._create_youtube_left_panel(upload_left_scrollable, card_bg_color, special_action_button_color, special_action_hover_color)
-        self._create_youtube_right_panel(right_panel_upload, panel_bg_color, textbox_bg_color)
-        
-        logging.debug("[YouTubeUploadUI] Tạo UI cho tab Upload YouTube hoàn tất.")
-        self.after(100, self._update_youtube_ui_state, False)
-
-# ==========================================================================================================================================================================================
-
-# HÀM DỰNG GIAO DIỆN: TẠO CÁC THÀNH PHẦN UI CHO TAB 'Upload YouTube'
-
-    def _create_youtube_upload_tab(self, parent_frame):
-        """
-        Tạo các thành phần UI cho chế độ xem 'Upload YouTube'.
-        (PHIÊN BẢN CẬP NHẬT 3: Checkbox Auto-Upload có khung nền riêng)
-        """
-        logging.debug("[YouTubeUploadUI] Đang tạo UI cho tab Upload YouTube...")
-
-        colors = get_theme_colors()
-        panel_bg_color = colors["panel_bg"]
-        card_bg_color = colors["card_bg"]
-        textbox_bg_color = colors["textbox_bg"]
-        danger_button_color = colors["danger_button"]
-        danger_button_hover_color = colors["danger_button_hover"]
-        special_action_button_color = colors["special_action_button"]
-        special_action_hover_color = colors["special_action_hover"]
-
-        main_frame_upload = ctk.CTkFrame(parent_frame, fg_color="transparent")
-        main_frame_upload.pack(fill="both", expand=True)
-        
-        main_frame_upload.grid_columnconfigure(0, weight=1, uniform="panelgroup")
-        main_frame_upload.grid_columnconfigure(1, weight=2, uniform="panelgroup")
-        main_frame_upload.grid_rowconfigure(0, weight=1)
-
-        left_panel_upload_container = ctk.CTkFrame(main_frame_upload, fg_color=panel_bg_color, corner_radius=12)
-        left_panel_upload_container.grid(row=0, column=0, padx=(0, 10), pady=0, sticky="nsew")
-        left_panel_upload_container.pack_propagate(False)
-
-        left_upload_scrollable_content = ctk.CTkScrollableFrame(
-            left_panel_upload_container,
-            fg_color="transparent"
-        )
-        left_upload_scrollable_content.pack(expand=True, fill="both", padx=0, pady=0)
-
-        # === CỤM NÚT HÀNH ĐỘNG CHÍNH (UPLOAD) ===
-        self._create_youtube_action_buttons_section(left_upload_scrollable_content, danger_button_color, danger_button_hover_color)
-
-        # Auto-upload checkbox
-        self._create_youtube_auto_upload_section(left_upload_scrollable_content, card_bg_color)
-
-        # Thumbnail selection
-        self._create_youtube_thumbnail_section(left_upload_scrollable_content, card_bg_color)
-
-        # Video information section
-        self._create_youtube_video_info_section(left_upload_scrollable_content, card_bg_color)
-
-        # Upload method section
-        self._create_youtube_upload_method_section(left_upload_scrollable_content, card_bg_color)
-
-        # Right panel with queue, log, and progress
-        self._create_youtube_right_panel(main_frame_upload, panel_bg_color, textbox_bg_color)
-        
-        logging.debug("[YouTubeUploadUI] Tạo UI cho tab Upload YouTube hoàn tất.")
-        self.after(100, self._update_youtube_ui_state, False)
-
-
-    def _create_youtube_action_buttons_section(self, parent_frame, danger_button_color, danger_button_hover_color):
-        """
-        Create action buttons section for YouTube upload tab.
-        
-        Args:
-            parent_frame: Parent frame to add buttons to
-            danger_button_color: Color tuple for danger button
-            danger_button_hover_color: Hover color tuple for danger button
-            
-        Returns:
-            Frame containing action buttons
-        """
-        action_buttons_main_frame = ctk.CTkFrame(parent_frame, fg_color="transparent")
-        action_buttons_main_frame.pack(pady=10, padx=10, fill="x")
-        action_buttons_main_frame.grid_columnconfigure((0, 1), weight=1)
-
-        self.youtube_select_video_button = ctk.CTkButton(
-            action_buttons_main_frame, text="📁 Chọn Video Upload...", height=38, font=("Segoe UI", 14, "bold"),
-            command=self._select_youtube_video_file
-        )
-        self.youtube_select_video_button.grid(row=0, column=0, columnspan=2, pady=5, sticky="ew")
-
-        self.youtube_start_upload_button = ctk.CTkButton(
-            action_buttons_main_frame, text="📤 Bắt đầu Upload Hàng loạt", height=45, font=("Segoe UI", 15, "bold"),
-            command=self._start_youtube_batch_upload 
-        )
-        self.youtube_start_upload_button.grid(row=1, column=0, columnspan=2, pady=5, sticky="ew")
-
-        self.youtube_stop_upload_button = ctk.CTkButton(
-            action_buttons_main_frame, text="🛑 Dừng Upload", height=35, font=("Segoe UI", 13, "bold"),
-            command=self._stop_youtube_upload, fg_color=danger_button_color, hover_color=danger_button_hover_color,
-            state=ctk.DISABLED, border_width=0
-        )
-        self.youtube_stop_upload_button.grid(row=2, column=0, padx=(0, 5), pady=5, sticky="ew")
-        
-        self.youtube_add_to_queue_button = ctk.CTkButton(
-            action_buttons_main_frame, text="➕ Thêm Hàng Chờ", height=35, font=("Segoe UI", 13, "bold"),
-            command=self._add_youtube_task_to_queue
-        )
-        self.youtube_add_to_queue_button.grid(row=2, column=1, padx=(5, 0), pady=5, sticky="ew")
-        
-        return action_buttons_main_frame
-
-
-    def _create_youtube_auto_upload_section(self, parent_frame, card_bg_color):
-        """
-        Create auto-upload checkbox section for YouTube upload tab.
-        
-        Args:
-            parent_frame: Parent frame to add section to
-            card_bg_color: Background color tuple for the card frame
-        """
-        auto_upload_frame = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-        auto_upload_frame.pack(fill="x", padx=10, pady=(5, 10))
-
-        self.auto_upload_checkbox = ctk.CTkCheckBox(
-            auto_upload_frame,
-            text="🚀Tự động Upload (Sau chuỗi tự động hoàn tất)",
-            variable=self.auto_upload_to_youtube_var,
-            font=("Segoe UI", 12, "bold"),
-            checkbox_height=18, checkbox_width=18,
-            command=self.save_current_config 
-        )
-        self.auto_upload_checkbox.pack(pady=10, padx=10, anchor="w")
-
-
-    def _create_youtube_thumbnail_section(self, parent_frame, card_bg_color):
-        """
-        Create thumbnail selection section for YouTube upload tab.
-        
-        Args:
-            parent_frame: Parent frame to add section to
-            card_bg_color: Background color tuple for the card frame
-        """
-        thumbnail_frame = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-        thumbnail_frame.pack(fill="x", padx=10, pady=(0, 10))
-        thumbnail_frame.grid_columnconfigure(0, weight=1)
-        thumbnail_frame.grid_columnconfigure(1, weight=0, minsize=110)
-        
-        ctk.CTkLabel(thumbnail_frame, text="🖼 Ảnh Thumbnail (Tùy chọn):", font=("Segoe UI", 13, "bold")).grid(row=0, column=0, columnspan=2, padx=10, pady=(5,2), sticky="w")
-        self.youtube_thumbnail_path_display_label = ctk.CTkLabel(thumbnail_frame, text="(Chưa chọn ảnh)", wraplength=200, anchor="w", text_color=("gray30", "gray70"), font=("Segoe UI", 10))
-        self.youtube_thumbnail_path_display_label.grid(row=1, column=0, padx=10, pady=(0,10), sticky="ew")
-        self.youtube_select_thumbnail_button = ctk.CTkButton(thumbnail_frame, text="Chọn Ảnh...", width=110, command=self._select_youtube_thumbnail)
-        self.youtube_select_thumbnail_button.grid(row=1, column=1, padx=10, pady=(0,10), sticky="e")
-
-    def _create_youtube_video_info_section(self, parent_frame, card_bg_color):
-        """
-        Create video information section for YouTube upload.
-        
-        Args:
-            parent_frame: Parent frame to add section to
-            card_bg_color: Background color for card frames
-        """
-        video_info_frame = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-        video_info_frame.pack(fill="x", padx=10, pady=(5, 10))
-      
-        ctk.CTkLabel(video_info_frame, text="🎬 Thông tin Video:", font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=10, pady=(5,2))
-        ctk.CTkLabel(video_info_frame, text="Đường dẫn Video:", anchor="w", font=("Segoe UI", 12)).pack(anchor="w", padx=10, pady=(2,0))
-        self.youtube_video_path_display_label = ctk.CTkLabel(video_info_frame, textvariable=self.youtube_video_path_var, wraplength=340, anchor="w", text_color=("gray30", "gray70"), font=("Segoe UI", 10))
-        self.youtube_video_path_display_label.pack(fill="x", padx=10, pady=(0, 5))
-        self.youtube_video_path_var.trace_add("write", lambda *a: self._update_youtube_path_label_display())
-        
-        # Title header with metadata checkboxes
-        title_header_frame = ctk.CTkFrame(video_info_frame, fg_color="transparent")
-        title_header_frame.pack(fill="x", padx=10, pady=(2,0))
-        title_header_frame.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(title_header_frame, text="Tiêu đề:", anchor="w", font=("Segoe UI", 12)).grid(row=0, column=0, sticky="w")
-        
-        # Fetch metadata checkbox
-        self.youtube_fetch_metadata_checkbox = ctk.CTkCheckBox(
-            title_header_frame, text="Lấy metadata",
-            variable=self.youtube_fetch_metadata_var, font=("Segoe UI", 11),
-            checkbox_height=18, checkbox_width=18,
-            command=lambda: self._on_metadata_checkbox_toggled('fetch')
-        )
-        self.youtube_fetch_metadata_checkbox.grid(row=0, column=1, padx=(0, 5), sticky="e")
-        Tooltip(self.youtube_fetch_metadata_checkbox, "Khi chọn video, tự động điền thông tin từ file Master Metadata (nếu có)")
-        
-        # Autofill checkbox
-        self.youtube_autofill_checkbox = ctk.CTkCheckBox(
-            title_header_frame, text="Lấy theo tên file",
-            variable=self.youtube_autofill_var, font=("Segoe UI", 11),
-            checkbox_height=18, checkbox_width=18,
-            command=lambda: self._on_metadata_checkbox_toggled('autofill')
-        )
-        self.youtube_autofill_checkbox.grid(row=0, column=2, sticky="e")
-        Tooltip(self.youtube_autofill_checkbox, "Khi chọn video, tự động điền Tiêu đề bằng tên file video")
-        
-        self.youtube_title_entry = ctk.CTkEntry(video_info_frame, textvariable=self.youtube_title_var, font=("Segoe UI", 12))
-        self.youtube_title_entry.pack(fill="x", padx=10, pady=(0,5))
-        
-        ctk.CTkLabel(video_info_frame, text="Mô tả:", anchor="w", font=("Segoe UI", 12)).pack(anchor="w", padx=10, pady=(2,0))
-        self.youtube_description_textbox = ctk.CTkTextbox(video_info_frame, height=80, wrap="word", font=("Segoe UI", 12))
-        self.youtube_description_textbox.pack(fill="x", padx=10, pady=(0,5))
-        saved_description = self.cfg.get("youtube_last_description", "")
-        if saved_description:
-            self.youtube_description_textbox.insert("1.0", saved_description)
-            
-        ctk.CTkLabel(video_info_frame, text="Thẻ tag (phân cách bởi dấu phẩy):", anchor="w", font=("Segoe UI", 12)).pack(anchor="w", padx=10, pady=(2,0))
-        self.youtube_tags_entry = ctk.CTkEntry(video_info_frame, textvariable=self.youtube_tags_var, font=("Segoe UI", 12))
-        self.youtube_tags_entry.pack(fill="x", padx=10, pady=(0,5))
-        
-        ctk.CTkLabel(video_info_frame, text="Danh sách phát (nhập chính xác tên):", anchor="w", font=("Segoe UI", 12)).pack(anchor="w", padx=10, pady=(2,0))
-        self.youtube_playlist_entry = ctk.CTkEntry(video_info_frame, textvariable=self.youtube_playlist_var, font=("Segoe UI", 12))
-        self.youtube_playlist_entry.pack(fill="x", padx=10, pady=(0,5))
-        
-        ctk.CTkLabel(video_info_frame, text="Trạng thái riêng tư:", anchor="w", font=("Segoe UI", 12)).pack(anchor="w", padx=10, pady=(2,0))
-        privacy_options = ["private", "unlisted", "public"]
-        self.youtube_privacy_optionmenu = ctk.CTkOptionMenu(video_info_frame, variable=self.youtube_privacy_status_var, values=privacy_options)
-        self.youtube_privacy_optionmenu.pack(fill="x", padx=10, pady=(0,10))
-
-        ctk.CTkLabel(video_info_frame, text="Danh mục Video:", anchor="w", font=("Segoe UI", 12)).pack(anchor="w", padx=10, pady=(2,0))
-        # Get category name from ID
-        self.youtube_category_display_var = ctk.StringVar(
-            value=YOUTUBE_CATEGORIES.get(self.youtube_category_id_var.get(), "Giải trí")
-        )
-        # Function called when user selects a menu item
-        def on_category_select(selected_display_name):
-            # Find ID corresponding to selected name and update main variable
-            for cat_id, cat_name in YOUTUBE_CATEGORIES.items():
-                if cat_name == selected_display_name:
-                    self.youtube_category_id_var.set(cat_id)
-                    break
-        
-        self.youtube_category_optionmenu = ctk.CTkOptionMenu(
-            video_info_frame, 
-            variable=self.youtube_category_display_var,
-            values=list(YOUTUBE_CATEGORIES.values()),
-            command=on_category_select
-        )
-        self.youtube_category_optionmenu.pack(fill="x", padx=10, pady=(0,10))
-
-        # Frame containing options for Video Elements (End Screen, Cards)
-        video_elements_frame = ctk.CTkFrame(video_info_frame, fg_color="transparent")
-        video_elements_frame.pack(fill="x", padx=10, pady=(0, 10))
-        video_elements_frame.grid_columnconfigure((0, 1), weight=1)
-
-        self.youtube_add_end_screen_checkbox = ctk.CTkCheckBox(
-            video_elements_frame,
-            text="Thêm MH kết thúc",
-            variable=self.youtube_add_end_screen_var,
-            font=("Segoe UI", 11),
-            checkbox_height=18, checkbox_width=18,
-            command=self.save_current_config
-        )
-        self.youtube_add_end_screen_checkbox.grid(row=0, column=0, sticky="w")
-        Tooltip(self.youtube_add_end_screen_checkbox, "Tự động thêm Màn hình kết thúc bằng cách 'Nhập từ video gần nhất'.")
-
-        self.youtube_add_cards_checkbox = ctk.CTkCheckBox(
-            video_elements_frame,
-            text="Thêm Thẻ video",
-            variable=self.youtube_add_cards_var,
-            font=("Segoe UI", 11),
-            checkbox_height=18, checkbox_width=18,
-            command=self.save_current_config
-        )
-        self.youtube_add_cards_checkbox.grid(row=0, column=1, sticky="e")
-        Tooltip(self.youtube_add_cards_checkbox, "Tự động thêm một Thẻ gợi ý video gần nhất.")
-
-    def _create_youtube_upload_method_section(self, parent_frame, card_bg_color):
-        """
-        Create upload method section with API and Browser options.
-        
-        Args:
-            parent_frame: Parent frame to add section to
-            card_bg_color: Background color for card frames
-        """
-        upload_method_frame = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-        upload_method_frame.pack(fill="x", padx=10, pady=(0, 10))
-        ctk.CTkLabel(upload_method_frame, text="Phương thức Upload:", font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=10, pady=(5,2))
-        self.upload_method_radio_api = ctk.CTkRadioButton(
-            upload_method_frame, text="API (Mặc định)", variable=self.youtube_upload_method_var, value="api",
-            command=lambda: self._on_upload_method_changed(self.youtube_upload_method_var.get()), 
-            font=("Segoe UI", 12)
-        )
-        self.upload_method_radio_api.pack(anchor="w", padx=10, pady=5)
-        self.upload_method_radio_browser = ctk.CTkRadioButton(
-            upload_method_frame, text="Trình duyệt (Chrome Portable)", variable=self.youtube_upload_method_var, value="browser",
-            command=lambda: self._on_upload_method_changed(self.youtube_upload_method_var.get()), 
-            font=("Segoe UI", 12)
-        )
-        self.upload_method_radio_browser.pack(anchor="w", padx=10, pady=5)
-
-        self.chrome_portable_config_frame = ctk.CTkFrame(parent_frame, fg_color=card_bg_color, corner_radius=8)
-
-        # Small frame containing checkbox for better alignment
-        headless_frame = ctk.CTkFrame(self.chrome_portable_config_frame, fg_color="transparent")
-        headless_frame.pack(fill="x", padx=10, pady=(10, 0))
-
-        self.headless_checkbox = ctk.CTkCheckBox(
-            headless_frame,
-            text="Ẩn trình duyệt khi upload (Headless Mode)",
-            variable=self.youtube_headless_var,
-            font=("Segoe UI", 12)
-        )
-        self.headless_checkbox.pack(anchor="w")
-
-        ctk.CTkLabel(self.chrome_portable_config_frame, text="Cấu hình Chrome Portable:", font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=10, pady=(5,2))
-        chrome_portable_path_frame = ctk.CTkFrame(self.chrome_portable_config_frame, fg_color="transparent")
-        chrome_portable_path_frame.pack(fill="x", padx=10, pady=(5,0))
-        chrome_portable_path_frame.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(chrome_portable_path_frame, text="Đường dẫn Chrome.exe:", anchor="w", font=("Segoe UI", 12)).grid(row=0, column=0, sticky="w")
-        self.chrome_portable_path_display_label = ctk.CTkLabel(chrome_portable_path_frame, textvariable=self.chrome_portable_path_var, wraplength=200, anchor="w", text_color=("gray30", "gray70"), font=("Segoe UI", 10))
-        self.chrome_portable_path_display_label.grid(row=1, column=0, padx=(0,5), sticky="ew")
-        chrome_portable_browse_button = ctk.CTkButton(chrome_portable_path_frame, text="Duyệt...", width=80, command=self._browse_chrome_portable_path)
-        chrome_portable_browse_button.grid(row=1, column=1, sticky="e")
-        
-        chromedriver_path_frame = ctk.CTkFrame(self.chrome_portable_config_frame, fg_color="transparent")
-        chromedriver_path_frame.pack(fill="x", padx=10, pady=(5,10))
-        chromedriver_path_frame.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(chromedriver_path_frame, text="Đường dẫn ChromeDriver.exe:", anchor="w", font=("Segoe UI", 12)).grid(row=0, column=0, sticky="w")
-        self.chromedriver_path_display_label = ctk.CTkLabel(chromedriver_path_frame, textvariable=self.chromedriver_path_var, wraplength=200, anchor="w", text_color=("gray30", "gray70"), font=("Segoe UI", 10))
-        self.chromedriver_path_display_label.grid(row=1, column=0, padx=(0,5), sticky="ew")
-        chromedriver_browse_button = ctk.CTkButton(chromedriver_path_frame, text="Duyệt...", width=80, command=self._browse_chromedriver_path)
-        chromedriver_browse_button.grid(row=1, column=1, sticky="e")
-        self.after(100, self._on_upload_method_changed, self.youtube_upload_method_var.get())
-
-    def _create_youtube_right_panel(self, main_frame, panel_bg_color, textbox_bg_color):
-        """
-        Create right panel with queue, log, and progress bar.
-        
-        Args:
-            main_frame: Main frame to add panel to
-            panel_bg_color: Background color for panel
-            textbox_bg_color: Background color for textbox
-        """
-        right_panel_upload = ctk.CTkFrame(main_frame, fg_color=panel_bg_color, corner_radius=12)
-        right_panel_upload.grid(row=0, column=1, pady=0, sticky="nsew")
-        
-        self.youtube_queue_display_frame = ctk.CTkScrollableFrame(
-            right_panel_upload,
-            label_text="📋 Hàng chờ Upload",
-            label_font=("Poppins", 14, "bold"),
-            height=200 
-        )
-        self.youtube_queue_display_frame.pack(fill="x", padx=10, pady=(10, 5))
-        ctk.CTkLabel(self.youtube_queue_display_frame, text="[Hàng chờ upload trống]", font=("Segoe UI", 11), text_color="gray").pack(pady=20)
-        
-        log_section_frame_upload = ctk.CTkFrame(right_panel_upload, fg_color="transparent")
-        log_section_frame_upload.pack(fill="both", expand=True, padx=10, pady=(0, 5))
-        log_section_frame_upload.grid_rowconfigure(1, weight=1)
-        log_section_frame_upload.grid_columnconfigure(0, weight=1)
-
-        # Log header with buttons
-        log_header_upload = ctk.CTkFrame(log_section_frame_upload, fg_color="transparent")
-        log_header_upload.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        log_header_upload.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(log_header_upload, text="📜 Log Upload:", font=("Poppins", 15, "bold")).grid(row=0, column=0, sticky="w")
-
-        header_buttons_container = ctk.CTkFrame(log_header_upload, fg_color="transparent")
-        header_buttons_container.grid(row=0, column=2, sticky="e")
-
-        self.manage_metadata_button = ctk.CTkButton(
-            header_buttons_container, text="🗂 Quản lý Metadata...",
-            height=28, font=("Poppins", 11),
-            command=self._open_metadata_manager
-        )
-        self.manage_metadata_button.pack(side="left", padx=(0, 5))
-
-        self.youtube_clear_log_button = ctk.CTkButton(
-            header_buttons_container, text="Clear Log",
-            height=28, font=("Poppins", 11),
-            command=self._clear_youtube_log
-        )
-        self.youtube_clear_log_button.pack(side="left", padx=(0, 0))
-
-        self.youtube_log_textbox = ctk.CTkTextbox(log_section_frame_upload, wrap="word", font=("Consolas", 12), state="disabled", fg_color=textbox_bg_color, border_width=1)
-        self.youtube_log_textbox.grid(row=1, column=0, sticky="nsew", padx=0, pady=(2,0))
-        self.youtube_log_textbox_placeholder = "[Log và trạng thái upload YouTube sẽ hiển thị ở đây.]"
-        self.youtube_log_textbox.configure(state="normal")
-        self.youtube_log_textbox.insert("1.0", self.youtube_log_textbox_placeholder)
-        self.youtube_log_textbox.configure(state="disabled")
-        
-        self.youtube_progress_bar = ctk.CTkProgressBar(right_panel_upload, orientation="horizontal", height=15, mode="determinate")
-        self.youtube_progress_bar.pack(fill="x", padx=10, pady=(5, 10), side="bottom")
-        self.youtube_progress_bar.configure(
-            progress_color=("#10B981", "#34D399"),
-            fg_color=("#D4D8DB", "#4A4D50")
-        )
-        self.youtube_progress_bar.set(1.0)
-
 
     def _update_youtube_path_label_display(self):
         """Cập nhật label hiển thị đường dẫn video đã chọn."""
-        path = self.youtube_video_path_var.get()
-        if hasattr(self, 'youtube_video_path_display_label') and self.youtube_video_path_display_label.winfo_exists():
-            display_text = os.path.basename(path) if path else "(Chưa chọn video)"
-            self.youtube_video_path_display_label.configure(text=display_text)
-
-            # Nếu path có giá trị, tự động điền Tiêu đề mặc định (nếu Tiêu đề đang trống)
-            if path and not self.youtube_title_var.get().strip():
-                # Tiêu đề mặc định là tên file (bỏ đuôi mở rộng)
-                default_title = os.path.splitext(os.path.basename(path))[0]
-                self.youtube_title_var.set(default_title)
-                logging.info(f"[YouTubeUI] Tự động điền tiêu đề: '{default_title}'")
-
-            # Sau khi cập nhật, kiểm tra lại trạng thái các nút upload
-            self._update_youtube_ui_state(self.is_uploading_youtube)
+        upload_tab = getattr(self, 'youtube_upload_view_frame', None)
+        if upload_tab:
+            upload_tab._update_youtube_path_label_display()
 
     def _clear_youtube_log(self):
         """Xóa nội dung trong ô log upload YouTube."""
-        if hasattr(self, 'youtube_log_textbox') and self.youtube_log_textbox.winfo_exists():
-            self.youtube_log_textbox.configure(state="normal")
-            self.youtube_log_textbox.delete("1.0", "end")
-            self.youtube_log_textbox.insert("1.0", self.youtube_log_textbox_placeholder)
-            self.youtube_log_textbox.configure(state="disabled")
-            logging.info("[YouTubeUI] Đã xóa log upload YouTube.")
+        upload_tab = getattr(self, 'youtube_upload_view_frame', None)
+        if upload_tab:
+            upload_tab._clear_youtube_log()
 
     def _log_youtube_upload(self, message):
         """Ghi log vào ô upload log YouTube (thread-safe)."""
-        if hasattr(self, 'youtube_log_textbox') and self.youtube_log_textbox.winfo_exists():
-            if not message.endswith('\n'):
-                message += '\n'
-            self.after(0, lambda: self.youtube_log_textbox.configure(state="normal"))
-            self.after(0, lambda: self.youtube_log_textbox.insert("end", message))
-            self.after(0, lambda: self.youtube_log_textbox.see("end"))
-            self.after(0, lambda: self.youtube_log_textbox.configure(state="disabled"))
-        else:
-            logging.info(f"[YouTubeLogFallback] {message.strip()}")
+        upload_tab = getattr(self, 'youtube_upload_view_frame', None)
+        if upload_tab:
+            upload_tab._log_youtube_upload(message)
 
     def _update_youtube_progress(self, value):
         """Cập nhật thanh tiến trình upload YouTube (thread-safe). Giá trị từ 0 đến 100."""
-        if hasattr(self, 'youtube_progress_bar') and self.youtube_progress_bar.winfo_exists():
-            self.after(0, lambda: self.youtube_progress_bar.set(float(value) / 100.0))
-        else:
-            # THÊM LOG CẢNH BÁO NẾU PROGRESS BAR KHÔNG TỒN TẠI
-            logging.warning("[_update_youtube_progress] youtube_progress_bar không tồn tại hoặc chưa được hiển thị khi cập nhật.")
+        upload_tab = getattr(self, 'youtube_upload_view_frame', None)
+        if upload_tab:
+            upload_tab._update_youtube_progress(value)
 
 #--------------------------------------
 # CÁC HÀM XỬ LÝ TẢI LÊN YOUTUBE ĐỒNG BỘ
@@ -2490,8 +1930,9 @@ class SubtitleApp(ctk.CTk):
         else:
             logging.info("[YouTubeUpload] Người dùng đã hủy chọn video.")
             if not self.youtube_video_path_var.get():
-                if hasattr(self, 'youtube_video_path_display_label'):
-                    self.youtube_video_path_display_label.configure(text="(Chưa chọn video)")
+                upload_tab = getattr(self, 'youtube_upload_view_frame', None)
+                if upload_tab and hasattr(upload_tab, 'youtube_video_path_display_label'):
+                    upload_tab.youtube_video_path_display_label.configure(text="(Chưa chọn video)")
             
             self._update_youtube_ui_state(False)
 
@@ -2542,14 +1983,16 @@ class SubtitleApp(ctk.CTk):
         
         # Kiểm tra phương thức upload và cài đặt thanh tiến trình tương ứng
         upload_method = self.youtube_upload_method_var.get()
-        if upload_method == "browser":
-            logging.info("Chế độ Upload Trình duyệt: Đặt thanh tiến trình sang 'indeterminate'.")
-            self.youtube_progress_bar.configure(mode="indeterminate")
-            self.youtube_progress_bar.start()
-        else: # Chế độ API
-            logging.info("Chế độ Upload API: Đặt thanh tiến trình sang 'determinate'.")
-            self.youtube_progress_bar.configure(mode="determinate")
-            self.youtube_progress_bar.set(0) # Bắt đầu từ 0%
+        upload_tab = getattr(self, 'youtube_upload_view_frame', None)
+        if upload_tab and hasattr(upload_tab, 'youtube_progress_bar'):
+            if upload_method == "browser":
+                logging.info("Chế độ Upload Trình duyệt: Đặt thanh tiến trình sang 'indeterminate'.")
+                upload_tab.youtube_progress_bar.configure(mode="indeterminate")
+                upload_tab.youtube_progress_bar.start()
+            else: # Chế độ API
+                logging.info("Chế độ Upload API: Đặt thanh tiến trình sang 'determinate'.")
+                upload_tab.youtube_progress_bar.configure(mode="determinate")
+                upload_tab.youtube_progress_bar.set(0) # Bắt đầu từ 0%
 
         self._update_youtube_ui_state(True)
         self.update_status(f"Bắt đầu upload hàng loạt {len(self.youtube_upload_queue)} video...")
@@ -2946,6 +2389,10 @@ class SubtitleApp(ctk.CTk):
         """
         logging.debug(f"[YouTubeUploadUI] Cập nhật trạng thái UI, is_uploading={is_uploading}, silent={silent}")
         self.is_uploading_youtube = is_uploading
+        
+        upload_tab = getattr(self, 'youtube_upload_view_frame', None)
+        if not upload_tab:
+            return
 
         # Kiểm Tra Bản Quyền
         is_app_active = self._is_app_fully_activated()
@@ -2955,11 +2402,11 @@ class SubtitleApp(ctk.CTk):
         target_state_normal = "normal" if can_interact else "disabled"
 
         # --- Nút Upload ---
-        if hasattr(self, 'youtube_start_upload_button') and self.youtube_start_upload_button.winfo_exists():
+        if hasattr(upload_tab, 'youtube_start_upload_button') and upload_tab.youtube_start_upload_button.winfo_exists():
             if is_uploading:
-                self.youtube_start_upload_button.configure(state="disabled", text="📤 Đang Upload...")
+                upload_tab.youtube_start_upload_button.configure(state="disabled", text="📤 Đang Upload...")
             elif not is_app_active:
-                self.youtube_start_upload_button.configure(state="disabled", text="🔒 Kích hoạt (Upload)")
+                upload_tab.youtube_start_upload_button.configure(state="disabled", text="🔒 Kích hoạt (Upload)")
             else:
                 # Chỉ bật khi hàng chờ có tác vụ
                 if getattr(self, "youtube_upload_queue", None):
@@ -2967,57 +2414,57 @@ class SubtitleApp(ctk.CTk):
                         qlen = len(self.youtube_upload_queue)
                     except Exception:
                         qlen = 0
-                    self.youtube_start_upload_button.configure(state="normal", text=f"📤 Bắt đầu Upload ({qlen} video)")
+                    upload_tab.youtube_start_upload_button.configure(state="normal", text=f"📤 Bắt đầu Upload ({qlen} video)")
                 else:
-                    self.youtube_start_upload_button.configure(state="disabled", text="📤 Bắt đầu Upload Hàng loạt")
+                    upload_tab.youtube_start_upload_button.configure(state="disabled", text="📤 Bắt đầu Upload Hàng loạt")
 
         # --- Nút Dừng ---
-        if hasattr(self, 'youtube_stop_upload_button') and self.youtube_stop_upload_button.winfo_exists():
-            self.youtube_stop_upload_button.configure(state="normal" if is_uploading else "disabled")
+        if hasattr(upload_tab, 'youtube_stop_upload_button') and upload_tab.youtube_stop_upload_button.winfo_exists():
+            upload_tab.youtube_stop_upload_button.configure(state="normal" if is_uploading else "disabled")
 
         # --- Nút Chọn Video ---
-        if hasattr(self, 'youtube_select_video_button') and self.youtube_select_video_button.winfo_exists():
+        if hasattr(upload_tab, 'youtube_select_video_button') and upload_tab.youtube_select_video_button.winfo_exists():
             if not is_app_active:
-                self.youtube_select_video_button.configure(state="disabled", text="🔒 Kích hoạt")
+                upload_tab.youtube_select_video_button.configure(state="disabled", text="🔒 Kích hoạt")
             else:
-                self.youtube_select_video_button.configure(state=target_state_normal, text="📁 Chọn Video Upload...")
+                upload_tab.youtube_select_video_button.configure(state=target_state_normal, text="📁 Chọn Video Upload...")
 
         # --- Các trường nhập liệu ---
-        if hasattr(self, 'youtube_title_entry') and self.youtube_title_entry and self.youtube_title_entry.winfo_exists():
-            self.youtube_title_entry.configure(state=target_state_normal)
-        if hasattr(self, 'youtube_tags_entry') and self.youtube_tags_entry and self.youtube_tags_entry.winfo_exists():
-            self.youtube_tags_entry.configure(state=target_state_normal)
-        if hasattr(self, 'youtube_privacy_optionmenu') and self.youtube_privacy_optionmenu and self.youtube_privacy_optionmenu.winfo_exists():
-            self.youtube_privacy_optionmenu.configure(state=target_state_normal)
-        if hasattr(self, 'youtube_description_textbox') and self.youtube_description_textbox and self.youtube_description_textbox.winfo_exists():
-            self.youtube_description_textbox.configure(state=target_state_normal)
+        if hasattr(upload_tab, 'youtube_title_entry') and upload_tab.youtube_title_entry and upload_tab.youtube_title_entry.winfo_exists():
+            upload_tab.youtube_title_entry.configure(state=target_state_normal)
+        if hasattr(upload_tab, 'youtube_tags_entry') and upload_tab.youtube_tags_entry and upload_tab.youtube_tags_entry.winfo_exists():
+            upload_tab.youtube_tags_entry.configure(state=target_state_normal)
+        if hasattr(upload_tab, 'youtube_privacy_optionmenu') and upload_tab.youtube_privacy_optionmenu and upload_tab.youtube_privacy_optionmenu.winfo_exists():
+            upload_tab.youtube_privacy_optionmenu.configure(state=target_state_normal)
+        if hasattr(upload_tab, 'youtube_description_textbox') and upload_tab.youtube_description_textbox and upload_tab.youtube_description_textbox.winfo_exists():
+            upload_tab.youtube_description_textbox.configure(state=target_state_normal)
 
         # --- Nút Clear Log ---
-        if hasattr(self, 'youtube_clear_log_button') and self.youtube_clear_log_button.winfo_exists():
-            self.youtube_clear_log_button.configure(state=target_state_normal)
+        if hasattr(upload_tab, 'youtube_clear_log_button') and upload_tab.youtube_clear_log_button.winfo_exists():
+            upload_tab.youtube_clear_log_button.configure(state=target_state_normal)
 
         # --- Checkbox Tự động Upload ---
-        if hasattr(self, 'auto_upload_checkbox') and self.auto_upload_checkbox.winfo_exists():
-            self.auto_upload_checkbox.configure(state=target_state_normal)
+        if hasattr(upload_tab, 'auto_upload_checkbox') and upload_tab.auto_upload_checkbox.winfo_exists():
+            upload_tab.auto_upload_checkbox.configure(state=target_state_normal)
 
         # --- Progressbar: chế độ & an toàn không bị kẹt ---
         try:
-            if hasattr(self, 'youtube_progress_bar') and self.youtube_progress_bar.winfo_exists():
+            if hasattr(upload_tab, 'youtube_progress_bar') and upload_tab.youtube_progress_bar.winfo_exists():
                 if is_uploading:
                     # Bắt đầu upload: đảm bảo indeterminate + chạy animation
-                    self.youtube_progress_bar.stop()              # reset vòng lặp nếu có
-                    self.youtube_progress_bar.configure(mode="indeterminate")
-                    self.youtube_progress_bar.set(0)              # thanh trống (không % cụ thể)
+                    upload_tab.youtube_progress_bar.stop()              # reset vòng lặp nếu có
+                    upload_tab.youtube_progress_bar.configure(mode="indeterminate")
+                    upload_tab.youtube_progress_bar.set(0)              # thanh trống (không % cụ thể)
                     try:
                         # CTkProgressBar: start() không nhận tham số; nếu bạn dùng ttk thì start(10) = 10ms/step
-                        self.youtube_progress_bar.start()
+                        upload_tab.youtube_progress_bar.start()
                     except Exception:
                         pass
                 else:
                     # Không upload: dừng, chuyển determinate, về 0
-                    self.youtube_progress_bar.stop()
-                    self.youtube_progress_bar.configure(mode="determinate")
-                    self.youtube_progress_bar.set(0)
+                    upload_tab.youtube_progress_bar.stop()
+                    upload_tab.youtube_progress_bar.configure(mode="determinate")
+                    upload_tab.youtube_progress_bar.set(0)
         except Exception as e:
             logging.debug(f"[YouTubeUploadUI] Progressbar cleanup skipped: {e}")
 
@@ -3048,17 +2495,6 @@ class SubtitleApp(ctk.CTk):
 
 
 # Cập nhật thanh tiến trình upload YouTube (thread-safe)
-    def _update_youtube_progress(self, value):
-        """Cập nhật thanh tiến trình upload YouTube (thread-safe). Giá trị từ 0 đến 100."""
-        if hasattr(self, 'youtube_progress_bar') and self.youtube_progress_bar.winfo_exists():
-            # Chuyển đổi giá trị % (0-100) thành float (0.0-1.0) cho CTkProgressBar
-            progress_value_float = float(value) / 100.0
-            # Đảm bảo giá trị nằm trong khoảng [0.0, 1.0]
-            clamped_value = max(0.0, min(1.0, progress_value_float))
-            # Lên lịch cập nhật trên luồng chính
-            self.after(0, lambda: self.youtube_progress_bar.set(clamped_value))
-        else:
-            logging.warning("[_update_youtube_progress] youtube_progress_bar không tồn tại hoặc chưa được hiển thị khi cập nhật.")
 
 
 # 2 Hàm Logic để Chọn File Thumbnail
@@ -3075,17 +2511,23 @@ class SubtitleApp(ctk.CTk):
         if file_path and os.path.exists(file_path):
             self.youtube_thumbnail_path_var.set(file_path)
             # Cập nhật label hiển thị
-            self.youtube_thumbnail_path_display_label.configure(text=os.path.basename(file_path), text_color=("#0B8457", "lightgreen"))
+            upload_tab = getattr(self, 'youtube_upload_view_frame', None)
+            if upload_tab and hasattr(upload_tab, 'youtube_thumbnail_path_display_label'):
+                upload_tab.youtube_thumbnail_path_display_label.configure(text=os.path.basename(file_path), text_color=("#0B8457", "lightgreen"))
             self.update_status(f"Đã chọn thumbnail: {os.path.basename(file_path)}")
         elif not file_path:
             # Nếu người dùng hủy và chưa có gì được chọn, reset lại
             if not self.youtube_thumbnail_path_var.get():
-                self.youtube_thumbnail_path_display_label.configure(text="(Chưa chọn ảnh)", text_color=("gray30", "gray70"))
+                upload_tab = getattr(self, 'youtube_upload_view_frame', None)
+                if upload_tab and hasattr(upload_tab, 'youtube_thumbnail_path_display_label'):
+                    upload_tab.youtube_thumbnail_path_display_label.configure(text="(Chưa chọn ảnh)", text_color=("gray30", "gray70"))
             logging.info("Người dùng hủy chọn thumbnail.")
         else:
             messagebox.showwarning("File không tồn tại", f"File ảnh '{file_path}' không tồn tại.", parent=self)
             self.youtube_thumbnail_path_var.set("")
-            self.youtube_thumbnail_path_display_label.configure(text="(File không tồn tại!)", text_color="red")
+            upload_tab = getattr(self, 'youtube_upload_view_frame', None)
+            if upload_tab and hasattr(upload_tab, 'youtube_thumbnail_path_display_label'):
+                upload_tab.youtube_thumbnail_path_display_label.configure(text="(File không tồn tại!)", text_color="red")
 
 #----------------------------
 # CÁC HÀM CHO UPLOAD BẰNG TRÌNH DUYỆT
@@ -3095,15 +2537,21 @@ class SubtitleApp(ctk.CTk):
         Hiển thị hoặc ẩn khung cấu hình Chrome Portable.
         """
         logging.info(f"Phương thức Upload YouTube thay đổi thành: {selected_method}")
-        if selected_method == "browser":
-            self.chrome_portable_config_frame.pack(fill="x", padx=10, pady=(0, 10), after=self.upload_method_radio_browser.master)
-            # Cập nhật hiển thị label cho đường dẫn hiện tại
-            update_path_label(self.chrome_portable_path_display_label, self.chrome_portable_path_var.get())
-            update_path_label(self.chromedriver_path_display_label, self.chromedriver_path_var.get())
-            self.update_status("📤 YouTube: Đã chọn upload qua Trình duyệt.")
-        else:
-            self.chrome_portable_config_frame.pack_forget()
-            self.update_status("📤 YouTube: Đã chọn upload qua API.")
+        upload_tab = getattr(self, 'youtube_upload_view_frame', None)
+        if upload_tab:
+            if selected_method == "browser":
+                if hasattr(upload_tab, 'chrome_portable_config_frame') and hasattr(upload_tab, 'upload_method_radio_browser'):
+                    upload_tab.chrome_portable_config_frame.pack(fill="x", padx=10, pady=(0, 10), after=upload_tab.upload_method_radio_browser.master)
+                # Cập nhật hiển thị label cho đường dẫn hiện tại
+                if hasattr(upload_tab, 'chrome_portable_path_display_label'):
+                    update_path_label(upload_tab.chrome_portable_path_display_label, self.chrome_portable_path_var.get())
+                if hasattr(upload_tab, 'chromedriver_path_display_label'):
+                    update_path_label(upload_tab.chromedriver_path_display_label, self.chromedriver_path_var.get())
+                self.update_status("📤 YouTube: Đã chọn upload qua Trình duyệt.")
+            else:
+                if hasattr(upload_tab, 'chrome_portable_config_frame'):
+                    upload_tab.chrome_portable_config_frame.pack_forget()
+                self.update_status("📤 YouTube: Đã chọn upload qua API.")
         
         # Lưu lại lựa chọn vào config
         self.cfg["youtube_upload_method"] = selected_method
@@ -3123,7 +2571,9 @@ class SubtitleApp(ctk.CTk):
         )
         if file_path:
             self.chrome_portable_path_var.set(file_path)
-            update_path_label(self.chrome_portable_path_display_label, file_path)
+            upload_tab = getattr(self, 'youtube_upload_view_frame', None)
+            if upload_tab and hasattr(upload_tab, 'chrome_portable_path_display_label'):
+                update_path_label(upload_tab.chrome_portable_path_display_label, file_path)
             self.cfg["chrome_portable_path"] = file_path # Lưu vào config
             self.save_current_config()
 
@@ -3139,7 +2589,9 @@ class SubtitleApp(ctk.CTk):
         )
         if file_path:
             self.chromedriver_path_var.set(file_path)
-            update_path_label(self.chromedriver_path_display_label, file_path)
+            upload_tab = getattr(self, 'youtube_upload_view_frame', None)
+            if upload_tab and hasattr(upload_tab, 'chromedriver_path_display_label'):
+                update_path_label(upload_tab.chromedriver_path_display_label, file_path)
             self.cfg["chromedriver_path"] = file_path # Lưu vào config
             self.save_current_config()
 
@@ -4127,6 +3579,13 @@ class SubtitleApp(ctk.CTk):
 
 
 # >>> BẮT ĐẦU CÁC HÀM MỚI CHO HÀNG CHỜ UPLOAD <<<
+    def _get_youtube_description(self):
+        """Lấy nội dung mô tả từ textbox YouTube upload."""
+        upload_tab = getattr(self, 'youtube_upload_view_frame', None)
+        if upload_tab and hasattr(upload_tab, 'youtube_description_textbox') and upload_tab.youtube_description_textbox and upload_tab.youtube_description_textbox.winfo_exists():
+            return upload_tab.youtube_description_textbox.get("1.0", "end-1c").strip()
+        return ""
+
     def _add_youtube_task_to_queue(self):
         """Thu thập thông tin từ UI, tạo một task và thêm vào hàng chờ upload."""
         log_prefix = "[YouTubeQueue]"
@@ -4151,7 +3610,7 @@ class SubtitleApp(ctk.CTk):
             "id": str(uuid.uuid4()),
             "video_path": video_path,
             "title": title,
-            "description": self.youtube_description_textbox.get("1.0", "end-1c").strip(),
+            "description": self._get_youtube_description(),
             "tags_str": self.youtube_tags_var.get().strip(),
             "playlist_name": self.youtube_playlist_var.get().strip(),
             "thumbnail_path": self.youtube_thumbnail_path_var.get().strip(),
@@ -4169,7 +3628,9 @@ class SubtitleApp(ctk.CTk):
         self.youtube_title_var.set("")
         self.youtube_thumbnail_path_var.set("")
         
-        self.youtube_thumbnail_path_display_label.configure(text="(Chưa chọn ảnh)", text_color=("gray30", "gray70"))        
+        upload_tab = getattr(self, 'youtube_upload_view_frame', None)
+        if upload_tab and hasattr(upload_tab, 'youtube_thumbnail_path_display_label') and upload_tab.youtube_thumbnail_path_display_label and upload_tab.youtube_thumbnail_path_display_label.winfo_exists():
+            upload_tab.youtube_thumbnail_path_display_label.configure(text="(Chưa chọn ảnh)", text_color=("gray30", "gray70"))        
         self.update_youtube_queue_display()
         self.update_status(f"✅ Đã thêm '{title[:30]}...' vào hàng chờ upload.")
 
@@ -4177,7 +3638,8 @@ class SubtitleApp(ctk.CTk):
 # Cập nhật giao diện của hàng chờ upload YouTube
     def update_youtube_queue_display(self):
         """Cập nhật giao diện của hàng chờ upload YouTube."""
-        queue_widget = getattr(self, 'youtube_queue_display_frame', None)
+        upload_tab = getattr(self, 'youtube_upload_view_frame', None)
+        queue_widget = getattr(upload_tab, 'youtube_queue_display_frame', None) if upload_tab else None
         
         if not queue_widget or not queue_widget.winfo_exists():
             return
@@ -10350,10 +9812,18 @@ class SubtitleApp(ctk.CTk):
                     parent=self
                 )
                 if self.dub_selected_tts_engine_var.get() == "Google Cloud TTS":
-                    self.dub_voice_option_menu.configure(values=["[Cần cấu hình Key JSON]"], state="disabled")
+                    try:
+                        if hasattr(self, 'dub_voice_option_menu') and hasattr(self.dub_voice_option_menu, 'update_values'):
+                            self.dub_voice_option_menu.update_values({"[Cần cấu hình Key JSON]": ""})
+                    except Exception:
+                        pass
             else:
                 if self.dub_selected_tts_engine_var.get() == "Google Cloud TTS":
-                    self.dub_voice_option_menu.configure(values=["[Lỗi tải danh sách]"], state="disabled")
+                    try:
+                        if hasattr(self, 'dub_voice_option_menu') and hasattr(self.dub_voice_option_menu, 'update_values'):
+                            self.dub_voice_option_menu.update_values({"[Lỗi tải danh sách]": ""})
+                    except Exception:
+                        pass
             return
 
         if voices_dict is not None:
@@ -10558,6 +10028,11 @@ class SubtitleApp(ctk.CTk):
                 logging.warning("[DubbingUI_SSML] ssml_row_frame hoặc parent/tham chiếu của nó chưa được khởi tạo khi cần hiển thị.")
         
         self.after_idle(_update_voice_menu_state_and_selection)
+        # Also update SSML checkbox state after engine/voice list refresh
+        try:
+            self.after_idle(self._update_ssml_checkbox_state)
+        except Exception:
+            pass
                 
 
 # --- CÁC HÀM HELPER MỚI HOẶC CẦN ĐIỀU CHỈNH CHO TAB THUYẾT MINH ---
@@ -19834,10 +19309,25 @@ class SubtitleApp(ctk.CTk):
                 # Đặt tên hiển thị cho menu
                 if final_display_name:
                     self.dub_selected_voice_display_name_var.set(final_display_name)
-                elif hasattr(self, 'dub_voice_option_menu') and self.dub_voice_option_menu.cget("values"):
-                    self.dub_selected_voice_display_name_var.set(self.dub_voice_option_menu.cget("values")[0])
                 else:
-                    self.dub_selected_voice_display_name_var.set("N/A")
+                    first_choice = None
+                    try:
+                        if hasattr(self, 'dub_voice_option_menu'):
+                            if hasattr(self.dub_voice_option_menu, 'filtered_list') and self.dub_voice_option_menu.filtered_list:
+                                candidates = [n for n in self.dub_voice_option_menu.filtered_list if not n.startswith('---')]
+                                if candidates:
+                                    first_choice = candidates[0]
+                            elif hasattr(self.dub_voice_option_menu, 'values_dict') and self.dub_voice_option_menu.values_dict:
+                                candidates = [n for n in self.dub_voice_option_menu.values_dict.keys() if not n.startswith('---')]
+                                if candidates:
+                                    first_choice = candidates[0]
+                    except Exception:
+                        pass
+                    if first_choice:
+                        self.dub_selected_voice_display_name_var.set(first_choice)
+                    else:
+                        self.dub_selected_voice_display_name_var.set("N/A")
+                
 
                 # --- BẮT ĐẦU KHỐI LOGIC SỬA LỖI SSML ---
                 ssml_checkbox = getattr(self, 'dub_chk_use_google_ssml', None)
@@ -22486,7 +21976,7 @@ class SubtitleApp(ctk.CTk):
         """Hiện hoặc ẩn các tùy chọn chi tiết cho việc tối ưu luồng đọc thuyết minh."""
         show_main_optimize_option = self.optimize_dub_flow_var.get()
         
-        # Frame chứa các tùy chọn chi tiết (đã tạo trong _create_dubbing_tab)
+        # Frame chứa các tùy chọn chi tiết (được tạo trong DubbingTab)
         # Lấy từ dubbing_view_frame (DubbingTab instance)
         dubbing_tab = getattr(self, 'dubbing_view_frame', None)
         if not dubbing_tab:
@@ -22529,7 +22019,7 @@ class SubtitleApp(ctk.CTk):
         # Lấy từ dubbing_view_frame
         dubbing_tab = getattr(self, 'dubbing_view_frame', None)
         if not dubbing_tab:
-            return
+            return 
 
         enable_split_details = self.dub_split_enabled_for_flow_var.get()
         new_state = ctk.NORMAL if enable_split_details else ctk.DISABLED
@@ -25578,17 +25068,31 @@ class SubtitleApp(ctk.CTk):
                         if v_id == task_voice_id_config:
                             found_display_name_for_task = disp_name
                             break
-                if found_display_name_for_task and hasattr(self, 'dub_voice_option_menu') and hasattr(self.dub_voice_option_menu, 'values_dict') and found_display_name_for_task in self.dub_voice_option_menu.values_dict:
+                if found_display_name_for_task and hasattr(self, 'dub_voice_option_menu') and hasattr(self.dub_voice_option_menu, 'values_dict') and found_display_name_for_task in getattr(self.dub_voice_option_menu, 'values_dict', {}):
                     self.dub_selected_voice_display_name_var.set(found_display_name_for_task)
                 elif current_task.get('voice_display_name_config'):
                     # Fallback nếu ID không tìm thấy nhưng display name có trong task config
                     # (hữu ích nếu map giọng đọc thay đổi nhưng muốn giữ lại tên gần đúng)
                     self.dub_selected_voice_display_name_var.set(current_task.get('voice_display_name_config'))
-                elif hasattr(self, 'dub_voice_option_menu') and self.dub_voice_option_menu.cget("values"):
-                    # Fallback cuối cùng, chọn cái đầu tiên trong menu nếu có
-                    self.dub_selected_voice_display_name_var.set(self.dub_voice_option_menu.cget("values")[0])
                 else:
-                    self.dub_selected_voice_display_name_var.set("N/A") # Nếu menu rỗng
+                    # Fallback cuối cùng, chọn cái đầu tiên hợp lệ nếu có
+                    first_choice = None
+                    try:
+                        if hasattr(self, 'dub_voice_option_menu'):
+                            if hasattr(self.dub_voice_option_menu, 'filtered_list') and self.dub_voice_option_menu.filtered_list:
+                                candidates = [n for n in self.dub_voice_option_menu.filtered_list if not n.startswith('---')]
+                                if candidates:
+                                    first_choice = candidates[0]
+                            elif hasattr(self.dub_voice_option_menu, 'values_dict') and self.dub_voice_option_menu.values_dict:
+                                candidates = [n for n in self.dub_voice_option_menu.values_dict.keys() if not n.startswith('---')]
+                                if candidates:
+                                    first_choice = candidates[0]
+                    except Exception:
+                        pass
+                    if first_choice:
+                        self.dub_selected_voice_display_name_var.set(first_choice)
+                    else:
+                        self.dub_selected_voice_display_name_var.set("N/A")
                 logging.debug(f"[DubBatchRestore] Voice Display Name set to: {self.dub_selected_voice_display_name_var.get()} (ID was: {task_voice_id_config})")
             
             self.after(50, _set_voice_display_name_after_menu_update) # Chờ một chút để menu giọng đọc cập nhật
@@ -26880,7 +26384,7 @@ class SubtitleApp(ctk.CTk):
 # Hàm tiện ích: Làm mới nội dung textbox hiển thị kịch bản thuyết minh
     def dub_refresh_script_textbox(self):
         """Làm mới nội dung của self.dub_script_textbox từ self.dub_srt_data."""
-        # self.dub_script_textbox sẽ được tạo trong _create_dubbing_tab
+        # self.dub_script_textbox được tạo trong DubbingTab (ui/tabs/dubbing_tab.py)
         if not hasattr(self, 'dub_script_textbox') or not self.dub_script_textbox:
             logging.warning("[Dubbing] dub_script_textbox chưa được khởi tạo.")
             return
@@ -29565,13 +29069,13 @@ class SubtitleApp(ctk.CTk):
 
             # Cập nhật trạng thái bật/tắt của các control con
             sub_control_state = control_state if use_custom_music_checked else ctk.DISABLED
-            getattr(self, 'dub_entry_custom_bg_music_volume').configure(state=sub_control_state)
-            getattr(self, 'dub_btn_browse_bg_folder').configure(state=sub_control_state)
-            getattr(self, 'dub_btn_browse_bg_music').configure(state=sub_control_state)
+            getattr(dubbing_tab, 'dub_entry_custom_bg_music_volume').configure(state=sub_control_state)
+            getattr(dubbing_tab, 'dub_btn_browse_bg_folder').configure(state=sub_control_state)
+            getattr(dubbing_tab, 'dub_btn_browse_bg_music').configure(state=sub_control_state)
             
             is_folder_mode = bool(self.dub_custom_bg_music_folder_path_var.get())
             randomize_state = ctk.NORMAL if use_custom_music_checked and is_folder_mode and not is_processing else ctk.DISABLED
-            getattr(self, 'dub_chk_randomize_music').configure(state=randomize_state)
+            getattr(dubbing_tab, 'dub_chk_randomize_music').configure(state=randomize_state)
             if not is_folder_mode: self.dub_randomize_bg_music_var.set(False)
 
         elif selected_option == self.dub_background_audio_options[2]: # "Audio Ducking"
@@ -31811,8 +31315,6 @@ class SubtitleApp(ctk.CTk):
 # MetadataManagerWindow class removed - moved to ui/popups/metadata_manager.py
 
 
-
-# AIEditorTab class - MOVED TO ui/tabs/ai_editor_tab.py
 
 # ==========================
 # SECTION 5: Khối Thực thi Chính
