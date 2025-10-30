@@ -297,6 +297,11 @@ class DubbingTab(ctk.CTkFrame):
             fg_color=danger_button_color, hover_color=danger_button_hover_color, border_width=0
         )
         self.dub_stop_button.grid(row=0, column=0, sticky="ew", padx=(0, 2))
+        # Expose to master app so other flows can toggle its state
+        try:
+            self.master_app.dub_stop_button = self.dub_stop_button
+        except Exception:
+            pass
         
         self.dub_load_video_button = ctk.CTkButton(
             btn_row_3_dubbing_controls, text="🎬 Video/Ảnh...",
@@ -921,4 +926,10 @@ class DubbingTab(ctk.CTkFrame):
         if hasattr(self.dub_script_textbox, 'bind'):
             self.dub_script_textbox.bind("<KeyRelease>", lambda event: self.master_app._update_dub_script_controls_state())
             self.dub_script_textbox.bind("<<Paste>>", self.master_app._dub_handle_paste_and_optimize_text)
+
+        # Expose the textbox to master app so other tabs/handlers can populate it
+        try:
+            self.master_app.dub_script_textbox = self.dub_script_textbox
+        except Exception:
+            pass
 

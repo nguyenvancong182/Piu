@@ -200,7 +200,7 @@ class SubtitleTab(ctk.CTkFrame):
 
         self.sub_and_dub_button = ctk.CTkButton(
             btn_row_1_sub, text="🎤 Sub & Dub", height=35,
-            font=("Segoe UI", 13, "bold"), command=self.master_app._handle_sub_and_dub_button_action
+            font=("Segoe UI", 13, "bold"), command=self._on_sub_and_dub_clicked
         )
         self.sub_and_dub_button.pack(side="left", expand=True, fill="x", padx=(0, 2))
 
@@ -563,6 +563,53 @@ class SubtitleTab(ctk.CTkFrame):
         
         self.after(150, lambda: self.master_app.on_engine_change(self.master_app.translation_engine_var.get()))
         self.after(150, lambda: self.master_app._toggle_block_merge_options_state())
+
+    def _on_sub_and_dub_clicked(self):
+        """Chuyển sang tab Dubbing và đưa nội dung phụ đề hiện tại sang ô kịch bản TM."""
+        try:
+            current_text = ""
+            if hasattr(self, "subtitle_textbox") and self.subtitle_textbox is not None:
+                current_text = self.subtitle_textbox.get("1.0", "end-1c").strip()
+        except Exception:
+            current_text = ""
+
+        # Gọi handler hiện có để thực hiện chuyển tab/logic liên quan
+        try:
+            if hasattr(self.master_app, "_handle_sub_and_dub_button_action"):
+                self.master_app._handle_sub_and_dub_button_action()
+        except Exception:
+            pass
+
+        # Sau khi UI đổi tab, điền text vào ô dubbing (nếu sẵn sàng)
+        def _populate_when_ready():
+            try:
+                dub_tb = getattr(self.master_app, "dub_script_textbox", None)
+                if dub_tb and current_text:
+                    try:
+                        dub_tb.configure(state="normal")
+                    except Exception:
+                        pass
+                    dub_tb.delete("1.0", "end")
+                    dub_tb.insert("1.0", current_text)
+                    if hasattr(self.master_app, "_update_dub_script_controls_state"):
+                        self.master_app._update_dub_script_controls_state()
+                    if hasattr(self.master_app, "_update_dub_start_batch_button_state"):
+                        self.master_app._update_dub_start_batch_button_state()
+                    if hasattr(self.master_app, "update_dub_queue_display"):
+                        self.master_app.update_dub_queue_display()
+
+                # Ensure Stop button is enabled so user can cancel the Sub&Dub chain immediately
+                dub_stop_btn = getattr(self.master_app, "dub_stop_button", None)
+                if dub_stop_btn is not None:
+                    try:
+                        dub_stop_btn.configure(state="normal")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # Đợi UI khởi tạo xong tab Dubbing rồi mới set nội dung
+        self.master_app.after(200, _populate_when_ready)
 
     def _create_subtitle_pacing_section(self, parent_frame, card_bg_color):
         """
