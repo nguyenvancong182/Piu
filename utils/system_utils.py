@@ -166,17 +166,22 @@ def is_cuda_available():
             creationflags = subprocess.CREATE_NO_WINDOW
         
         logging.debug("Running nvidia-smi to check CUDA and VRAM...")
-        r = subprocess.run(
-            ["nvidia-smi"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            startupinfo=startupinfo,
-            creationflags=creationflags,
-            check=False,
-            text=True,
-            encoding='utf-8',
-            errors='ignore'
-        )
+        try:
+            r = subprocess.run(
+                ["nvidia-smi"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                startupinfo=startupinfo,
+                creationflags=creationflags,
+                check=False,
+                text=True,
+                encoding='utf-8',
+                errors='ignore',
+                timeout=10  # Timeout sau 10 giây để tránh treo
+            )
+        except subprocess.TimeoutExpired:
+            logging.warning("nvidia-smi bị timeout sau 10 giây. Có thể GPU đang bận hoặc driver gặp vấn đề.")
+            return 'ERROR', 0
 
         if r.returncode == 0:
             stdout_content = r.stdout if r.stdout else ""

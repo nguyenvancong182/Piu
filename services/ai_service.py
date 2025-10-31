@@ -246,6 +246,7 @@ class AIService:
         character_sheet_text: str = "",
         formatted_srt_for_timing: Optional[str] = None,
         min_scene_duration_seconds: int = 0,
+        total_duration_seconds: float = 0.0,
         auto_split_scenes: bool = False,
         art_style_name: str = "Mặc định (AI tự do)",
         art_style_prompt: str = "",
@@ -381,36 +382,36 @@ class AIService:
             main_task_description = ""
             final_instruction = ""
             
-            if min_scene_duration_seconds > 0 and formatted_srt_for_timing:
-                # Calculate total duration from SRT
-                # Simplified version - full calculation in Piu.py
-                total_duration_seconds = 0  # Placeholder - should be calculated from SRT
+            if min_scene_duration_seconds > 0 and total_duration_seconds > 0:
+                # Use total_duration_seconds calculated in Piu.py (from SRT)
+                # Logic sáng tạo: Tính khoảng gợi ý số lượng cảnh dựa trên thời lượng tối thiểu/ảnh
+                base_upper_bound = max(1, int(total_duration_seconds / min_scene_duration_seconds))
+                lower_bound_scenes = max(1, int(base_upper_bound * 0.5))  # Nới lỏng cận dưới xuống 50%
+                creative_upper_bound = max(base_upper_bound, int(base_upper_bound * 1.25))  # Cho phép cận trên sáng tạo cao hơn 25%
                 
-                if total_duration_seconds > 0:
-                    base_upper_bound = max(1, int(total_duration_seconds / min_scene_duration_seconds))
-                    lower_bound_scenes = max(1, int(base_upper_bound * 0.5))
-                    creative_upper_bound = max(base_upper_bound, int(base_upper_bound * 1.25))
-                    
-                    main_task_description = (
-                        "You are a creative script analyst and director's assistant. You are processing a single, **continuous, and coherent narrative**. "
-                        "Your primary task is to read this script and divide it into meaningful visual scenes. Your decisions must maintain character and story consistency across all scenes. "
-                        "You must follow one strict rule, but otherwise have complete creative freedom to ensure the best narrative pacing."
-                    )
-                    
-                    duration_rules_block = (
-                        "\n\n**CRITICAL DURATION AND SCENE DIVISION RULES:**\n"
-                        f"1. **The Hard Rule (Non-Negotiable):** Each 'scene_script' MUST represent a segment of AT LEAST **{min_scene_duration_seconds} seconds**. This is your only strict constraint.\n"
-                        f"2. **Creative Guideline (For Reference Only):** Based on the script's length ({total_duration_seconds:.0f} seconds), similar projects often result in **{lower_bound_scenes} to {creative_upper_bound}** scenes. Consider this a general observation, NOT a target you must hit.\n"
-                        "3. **Your Director's Judgment (Highest Priority):** Your main goal is to serve the story's rhythm and emotional impact. You have full authority to determine the final number of scenes."
-                    )
-                    
-                    final_instruction = (
-                        "Generate the JSON output. Strictly follow the minimum duration rule. "
-                        "Use your creative judgment to select the best number of scenes for optimal storytelling."
-                    )
+                self.logger.info(f"{log_prefix} Logic sáng tạo được kích hoạt: min_duration={min_scene_duration_seconds}s, total_duration={total_duration_seconds:.2f}s, gợi ý {lower_bound_scenes}-{creative_upper_bound} cảnh. KHÔNG dùng num_images={num_images} làm giới hạn.")
+                
+                main_task_description = (
+                    "You are a creative script analyst and director's assistant. You are processing a single, **continuous, and coherent narrative**. "
+                    "Your primary task is to read this script and divide it into meaningful visual scenes. Your decisions must maintain character and story consistency across all scenes. "
+                    "You must follow one strict rule, but otherwise have complete creative freedom to ensure the best narrative pacing."
+                )
+                
+                duration_rules_block = (
+                    "\n\n**CRITICAL DURATION AND SCENE DIVISION RULES:**\n"
+                    f"1. **The Hard Rule (Non-Negotiable):** Each 'scene_script' MUST represent a segment of AT LEAST **{min_scene_duration_seconds} seconds**. This is your only strict constraint.\n"
+                    f"2. **Creative Guideline (For Reference Only):** Based on the script's length ({total_duration_seconds:.0f} seconds), similar projects often result in **{lower_bound_scenes} to {creative_upper_bound}** scenes. Consider this a general observation, NOT a target you must hit.\n"
+                    "3. **Your Director's Judgment (Highest Priority):** Your main goal is to serve the story's rhythm and emotional impact. You have full authority to determine the final number of scenes. If the story is best told with **more scenes** than the guideline (e.g., 8, 9, or more), you are encouraged to do so, provided each scene respects the Hard Rule. If the story flows better with fewer, longer scenes, that is also a valid creative choice. **The final decision is yours.**"
+                )
+                
+                final_instruction = (
+                    "Generate the JSON output. Strictly follow the minimum duration rule. "
+                    "Use your creative judgment to select the best number of scenes for optimal storytelling, using the provided range as a creative guideline. Remember to maintain narrative consistency throughout."
+                )
             
             # Default task description if no duration limit
             if not main_task_description:
+                self.logger.info(f"{log_prefix} KHÔNG có giới hạn thời gian. Sử dụng num_images={num_images} (auto_split_scenes={auto_split_scenes})")
                 if auto_split_scenes:
                     main_task_description = (
                         "You are an expert script analyst... You are processing a single, **continuous, and coherent narrative**. "

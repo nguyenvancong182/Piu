@@ -16,6 +16,7 @@ import logging
 import os
 import sys
 import gc
+import subprocess
 from typing import Optional, Dict, Tuple, Callable
 from contextlib import redirect_stdout, redirect_stderr
 
@@ -139,11 +140,16 @@ class ModelService:
             self.gpu_vram_mb = vram_mb
             self.logger.info(f"[ModelService] CUDA check: {status}, VRAM: {vram_mb} MB")
             return status, vram_mb
+        except subprocess.TimeoutExpired:
+            self.logger.warning("[ModelService] CUDA check timeout - nvidia-smi mất quá nhiều thời gian")
+            self.cuda_status = "ERROR"
+            self.gpu_vram_mb = 0
+            return "ERROR", 0
         except Exception as e:
             self.logger.error(f"[ModelService] Error checking CUDA: {e}", exc_info=True)
-            self.cuda_status = "UNKNOWN"
+            self.cuda_status = "ERROR"
             self.gpu_vram_mb = 0
-            return "UNKNOWN", 0
+            return "ERROR", 0
     
     def get_recommended_device(self, model_name: str) -> str:
         """

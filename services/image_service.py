@@ -281,7 +281,8 @@ class ImageService:
         negative_prompt: str = "",
         stop_event: Optional[Callable[[], bool]] = None,
         max_retries_per_prompt: int = 2,
-        retry_delay_seconds: float = 5.0
+        retry_delay_seconds: float = 5.0,
+        status_callback: Optional[Callable[[str], None]] = None
     ) -> Tuple[List[str], Optional[str]]:
         """
         Generate images using Imagen 3 API.
@@ -297,6 +298,7 @@ class ImageService:
             stop_event: Callable that returns True if processing should stop
             max_retries_per_prompt: Maximum retries per prompt on error
             retry_delay_seconds: Initial delay between retries
+            status_callback: Optional callback to update status (e.g., "Đang vẽ ảnh 1/3...")
             
         Returns:
             Tuple of (saved_image_paths, error_message)
@@ -323,9 +325,11 @@ class ImageService:
                 if stop_event and stop_event():
                     return saved_image_paths, "Đã dừng bởi người dùng."
                 
-                # Combine prompt with style
-                prompt_with_style = f"{prompt.strip()}, {style_prompt_fragment}" if style_prompt_fragment else prompt.strip()
+                # Update status via callback (giống file gốc)
+                if status_callback:
+                    status_callback(f"🖼 Imagen: Đang chuẩn bị ảnh {i+1}/{len(prompts)}...")
                 
+                # Piu.py đã xử lý style_prompt_fragment, chỉ cần xử lý negative prompt ở đây
                 # Prepare negative prompt
                 default_negative_keywords = "text, words, letters, writing, typography, signs, banners, logos, watermark, signature, extra fingers, malformed hands, lowres, blurry"
                 final_negative_prompt_str = default_negative_keywords
@@ -333,7 +337,8 @@ class ImageService:
                     final_negative_prompt_str = f"{negative_prompt}, {default_negative_keywords}"
                 
                 # Combine everything into final prompt
-                final_prompt_for_api = f"{prompt_with_style} (without: {final_negative_prompt_str})"
+                # Note: prompt đã có style_prompt_fragment từ Piu.py rồi
+                final_prompt_for_api = f"{prompt.strip()} (without: {final_negative_prompt_str})"
                 
                 self.logger.info(f"{log_prefix} Generating {num_images_per_prompt} image(s) for prompt {i+1}/{len(prompts)}: '{prompt[:50]}...'")
                 
@@ -344,8 +349,14 @@ class ImageService:
                     
                     try:
                         # Create config
+                        # Imagen 3.0 chỉ hỗ trợ sampleCount từ 1 đến 4
+                        # Nếu num_images_per_prompt > 4, cần giới hạn về 4
+                        safe_num_images = min(max(1, num_images_per_prompt), 4)
+                        if num_images_per_prompt > 4:
+                            self.logger.warning(f"{log_prefix} num_images_per_prompt ({num_images_per_prompt}) vượt quá giới hạn Imagen 3 (max=4). Sẽ sử dụng 4.")
+                        
                         image_gen_config = types.GenerateImagesConfig(
-                            number_of_images=num_images_per_prompt,
+                            number_of_images=safe_num_images,
                             aspect_ratio=aspect_ratio
                         )
                         

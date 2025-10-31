@@ -503,11 +503,9 @@ class SubtitleApp(ctk.CTk):
         self.start_time = None
         self._dub_trigger_initiated_for_current_batch = False 
         self.processing_thread = None
-        self.download_thread = None
         self.current_process = None # Lưu tiến trình con
         self.dub_current_ffmpeg_process = None
-        self.download_urls_list = [] # Lưu danh sách URL chờ
-        self.current_download_url = None # Lưu URL đang tải
+        # download_thread, download_urls_list, current_download_url đã được di chuyển sang DownloadTab
         self.is_performing_single_task = False # Cờ chung reset Tab Swicher
         self.is_manual_update_checking = False # Cờ mới cho kiểm tra cập nhật thủ công
         self.current_single_task_status = "" # Biến mới để lưu status cho hàng chờ
@@ -822,27 +820,14 @@ class SubtitleApp(ctk.CTk):
         # --------------------
         # Biến cấu hình của ĐOWNLOAD
         # --------------------
-
-        # --- Biến & Cấu hình Cụ thể cho Tải xuống ---
-        self.download_playlist_var = ctk.BooleanVar(value=self.cfg.get("download_playlist", False))
+        # CÁC BIẾN ĐÃ ĐƯỢC DI CHUYỂN SANG ui/tabs/download_tab.py (DownloadTab.__init__)
+        # Các biến download_xxx_var hiện tại thuộc về DownloadTab
+        
+        # Các biến này vẫn giữ ở đây vì có thể được dùng chung:
         # Sử dụng get_default_downloads_folder nếu chưa có trong config
-        self.disable_auto_sheet_check_var = ctk.BooleanVar(value=self.cfg.get("disable_auto_sheet_check", False))
-        self.download_path_var = ctk.StringVar(value=self.cfg.get("download_path", get_default_downloads_folder()))
-        self.download_mode_var = ctk.StringVar(value=self.cfg.get("download_mode", "video"))
-        self.download_video_quality_var = ctk.StringVar(value=self.cfg.get("download_video_quality", "1080p"))
-        self.download_audio_quality_var = ctk.StringVar(value=self.cfg.get("download_audio_quality", "320k"))
-        self.download_sound_var = ctk.BooleanVar(value=self.cfg.get("download_sound_enabled", False))
-        self.download_sound_path_var = ctk.StringVar(value=self.cfg.get("download_sound_path", ""))
-        self.download_shutdown_var = ctk.BooleanVar(value=self.cfg.get("download_shutdown_enabled", False))
-        self.download_rename_var = ctk.BooleanVar(value=self.cfg.get("download_rename_enabled", False))
-        self.download_rename_box_var = ctk.StringVar(value=self.cfg.get("download_rename_base_name", ""))
-        self.download_stop_on_error_var = ctk.BooleanVar(value=self.cfg.get("download_stop_on_error", False))
+        # (disable_auto_sheet_check_var đã được khởi tạo ở dòng 619)
         self.sheet_id_var = ctk.StringVar(value=self.cfg.get("sheet_id", ""))
         self.sheet_range_var = ctk.StringVar(value=self.cfg.get("sheet_range", "Sheet1!B2:B"))
-        self.download_auto_dub_after_sub_var = ctk.BooleanVar(value=self.cfg.get("download_auto_dub_after_sub", False))
-        self.auto_upload_after_download_var = ctk.BooleanVar(value=self.cfg.get("auto_upload_after_download", False))
-        self.download_use_cookies_var = ctk.BooleanVar(value=self.cfg.get("download_use_cookies", False))
-        self.download_cookies_path_var = ctk.StringVar(value=self.cfg.get("download_cookies_path", ""))
 
         # --- Biến cấu hình của UPLOAD YOUTUBE --- # <-- DÒNG BẠN SẼ THÊM
         self.youtube_video_path_var = ctk.StringVar(value="") # Đường dẫn video đã chọn để upload
@@ -878,8 +863,7 @@ class SubtitleApp(ctk.CTk):
         self.youtube_add_end_screen_var = ctk.BooleanVar(value=self.cfg.get("youtube_add_end_screen", False))
         self.youtube_add_cards_var = ctk.BooleanVar(value=self.cfg.get("youtube_add_cards", False))
         
-        self.download_retry_counts = {} 
-        self.globally_completed_urls = set() 
+        # download_retry_counts và globally_completed_urls đã được di chuyển sang DownloadTab 
 
         # --- Tối ưu Lưu Cấu Hình: Xóa/Comment các dòng trace_add gọi save_current_config ---
         self.model_var.trace_add("write", self.on_model_change)
@@ -1961,7 +1945,7 @@ class SubtitleApp(ctk.CTk):
         # Sync với Piu state
         self.is_uploading_youtube = self.youtube_service.is_uploading
         self.youtube_currently_processing_task_id = self.youtube_service.currently_processing_task_id
-        self.shutdown_requested_by_task = self.download_shutdown_var.get()
+        self.shutdown_requested_by_task = self.download_view_frame.download_shutdown_var.get() if hasattr(self, 'download_view_frame') else False
         self.start_time = time.time()
         self.update_time_realtime()
         self.stop_event.clear()
@@ -2360,10 +2344,10 @@ class SubtitleApp(ctk.CTk):
         if not should_shutdown:
             # Phát âm thanh (nếu có)
             try:
-                if (hasattr(self, "download_sound_var") and self.download_sound_var.get()
-                    and hasattr(self, "download_sound_path_var") and self.download_sound_path_var.get()
-                    and os.path.isfile(self.download_sound_path_var.get())):
-                    play_sound_async(self.download_sound_path_var.get())
+                if (hasattr(self, "download_view_frame") and hasattr(self.download_view_frame, "download_sound_var") and self.download_view_frame.download_sound_var.get()
+                    and hasattr(self.download_view_frame, "download_sound_path_var") and self.download_view_frame.download_sound_path_var.get()
+                    and os.path.isfile(self.download_view_frame.download_sound_path_var.get())):
+                    play_sound_async(self.download_view_frame.download_sound_path_var.get())
             except Exception as e:
                 logging.debug(f"[BatchFinished] play_sound skipped: {e}")
 
@@ -4702,6 +4686,19 @@ class SubtitleApp(ctk.CTk):
             if key in min_duration_setting:
                 min_duration_seconds = value
                 break
+        
+        # Tính tổng thời lượng kịch bản từ SRT (bê nguyên code từ file gốc)
+        total_duration_seconds = 0.0
+        if min_duration_seconds > 0 and formatted_srt_for_slideshow:
+            # Tính tổng thời lượng kịch bản gốc
+            total_duration_ms = 0
+            original_timed_segments = self._parse_plain_text_to_srt_data(formatted_srt_for_slideshow)
+            if original_timed_segments:
+                total_duration_ms = original_timed_segments[-1]['end_ms'] - original_timed_segments[0]['start_ms']
+            
+            if total_duration_ms > 0:
+                total_duration_seconds = total_duration_ms / 1000.0
+                logging.info(f"{worker_log_prefix} Áp dụng giới hạn thời gian: Tối thiểu {min_duration_seconds}s/cảnh. Tổng thời lượng kịch bản: {total_duration_seconds:.2f}s.")
                 
         # Gọi AI Service để xử lý
         try:
@@ -4713,6 +4710,7 @@ class SubtitleApp(ctk.CTk):
                 character_sheet_text=character_sheet_text,
                 formatted_srt_for_timing=formatted_srt_for_slideshow,
                 min_scene_duration_seconds=min_duration_seconds,
+                total_duration_seconds=total_duration_seconds,  # Truyền thêm tổng thời lượng đã tính
                 auto_split_scenes=auto_split_scenes,
                 art_style_name=saved_style_name,
                 art_style_prompt=style_prompt_fragment,
@@ -4955,11 +4953,18 @@ class SubtitleApp(ctk.CTk):
         api_key = self.gemini_key_var.get()
         if not api_key:
             error_message = "Lỗi: Thiếu Gemini API Key (cần cho Imagen)."
+            # Tạo payload mặc định cho trường hợp lỗi
+            error_payload = {
+                "image_prompts": prompts if prompts else [],
+                "image_durations_seconds": [],
+                "original_plain_text_for_dub": original_plain_text_for_dub or "",
+                "original_full_srt_for_hardsub": script_for_slideshow_timing if isinstance(script_for_slideshow_timing, str) else ""
+            }
             self.after(0, self._handle_slideshow_creation_and_completion,
-                      [], script_for_slideshow_timing, original_plain_text_for_dub,
+                      [], error_payload, original_plain_text_for_dub,
                       output_folder, target_widget, context, trigger_dub_chain_flag,
                       image_engine_name, ai_script_engine_name, base_filename_for_chain,
-                      error_message)
+                      error_message, output_dir_override)
             return
         
         # Chuẩn bị prompts với style và negative prompt
@@ -4970,36 +4975,73 @@ class SubtitleApp(ctk.CTk):
 
         with keep_awake(f"Generating {len(prepared_prompts)} Imagen images"):
             # Gọi Image Service để tạo ảnh
+            # TRONG CHAIN GENERATION: mỗi prompt chỉ tạo 1 ảnh (giống file gốc)
+            # Tham số num_images_per_prompt ở đây không được sử dụng trong logic gốc
+            # Thêm callback để update status (giống file gốc dòng 8395)
+            def update_status_callback(status_msg):
+                """Callback để update status từ thread"""
+                self.after(0, lambda: self.update_status(status_msg))
+            
             saved_image_paths, error_message = self.image_service.generate_imagen_images(
                 prompts=prepared_prompts,
-                num_images_per_prompt=num_images_per_prompt,
+                num_images_per_prompt=1,  # Sửa: Chain generation luôn tạo 1 ảnh/prompt
                 output_folder=output_folder,
                 api_key=api_key,
                 aspect_ratio=aspect_ratio,
-                style_prompt_fragment=style_prompt_fragment,
+                style_prompt_fragment="",  # Đã xử lý trong prepared_prompts, không cần nữa
                 negative_prompt=negative_prompt,
                 stop_event=lambda: self.stop_event.is_set(),
                 max_retries_per_prompt=2,
-                retry_delay_seconds=5.0
+                retry_delay_seconds=5.0,
+                status_callback=update_status_callback  # Thêm callback để hiển thị progress
             )
             
             # Track API calls nếu thành công
             if saved_image_paths:
                 self._track_api_call(service_name="imagen_images", units=len(saved_image_paths))
             
+            # Tạo payload từ các tham số (giống như trong _handle_gemini_scene_division_result)
+            # Cần lấy image_durations_seconds từ payload ban đầu nếu có, nếu không thì tính lại
+            payload_for_next_steps = {}
+            try:
+                # Nếu script_for_slideshow_timing là payload dict, lấy từ đó
+                if isinstance(script_for_slideshow_timing, dict):
+                    # Đây là payload từ _handle_image_generation_and_slideshow
+                    payload_for_next_steps = script_for_slideshow_timing.copy()
+                    # Đảm bảo có image_prompts (có thể là prompts gốc, không phải prepared_prompts)
+                    if "image_prompts" not in payload_for_next_steps or not payload_for_next_steps["image_prompts"]:
+                        payload_for_next_steps["image_prompts"] = prompts
+                else:
+                    # Tạo payload mới từ các tham số string
+                    payload_for_next_steps = {
+                        "image_prompts": prompts,  # Danh sách prompts gốc
+                        "image_durations_seconds": [],  # Sẽ được tính trong _handle_slideshow_creation_and_completion
+                        "original_plain_text_for_dub": original_plain_text_for_dub,
+                        "original_full_srt_for_hardsub": script_for_slideshow_timing  # SRT string
+                    }
+            except Exception as e:
+                logging.warning(f"{worker_log_prefix} Không thể tạo payload, sử dụng payload mặc định: {e}")
+                payload_for_next_steps = {
+                    "image_prompts": prompts,
+                    "image_durations_seconds": [],
+                    "original_plain_text_for_dub": original_plain_text_for_dub or "",
+                    "original_full_srt_for_hardsub": script_for_slideshow_timing if isinstance(script_for_slideshow_timing, str) else ""
+                }
+            
             # Gọi callback để xử lý kết quả
-                self.after(0, self._handle_slideshow_creation_and_completion,
+            self.after(0, self._handle_slideshow_creation_and_completion,
                       saved_image_paths,
-                           script_for_slideshow_timing,
-                           original_plain_text_for_dub,
-                           output_folder,
-                           target_widget,
-                           context,
-                           trigger_dub_chain_flag,
-                           image_engine_name,
-                           ai_script_engine_name,
-                           base_filename_for_chain,
-                      error_message)
+                      payload_for_next_steps,  # Truyền payload thay vì string riêng lẻ
+                      original_plain_text_for_dub,  # Giữ để backward compatibility
+                      output_folder,
+                      target_widget,
+                      context,
+                      trigger_dub_chain_flag,
+                      image_engine_name,
+                      ai_script_engine_name,
+                      base_filename_for_chain,
+                      error_message,
+                      output_dir_override)
 
 
 # HÀM HELPER MỚI: HIỂN THỊ POPUP LỖI KHÔNG CHẶN
@@ -5641,7 +5683,7 @@ class SubtitleApp(ctk.CTk):
             self._handle_gemini_script_editing_result_for_chain(
                 processed_script=script_content,
                 error_message=None,
-                target_widget=self.subtitle_textbox,
+                target_widget=self.subtitle_view_frame.subtitle_textbox if hasattr(self, 'subtitle_view_frame') and hasattr(self.subtitle_view_frame, 'subtitle_textbox') else None,
                 context="subtitle_batch_skipped_edit",
                 trigger_imagen_chain_flag=True,
                 trigger_dub_chain_flag=should_trigger_dubbing_for_this_item,
@@ -6492,8 +6534,8 @@ class SubtitleApp(ctk.CTk):
             if not trigger_dalle_chain_flag: 
                 self.update_status(f"✅ GPT đã biên tập xong kịch bản ({calling_button_context}).")
                 try:
-                    play_sound_on_gpt_task_complete = self.download_sound_var.get()
-                    sound_file_to_play_gpt = self.download_sound_path_var.get()
+                    play_sound_on_gpt_task_complete = self.download_view_frame.download_sound_var.get() if hasattr(self, 'download_view_frame') else False
+                    sound_file_to_play_gpt = self.download_view_frame.download_sound_path_var.get() if hasattr(self, 'download_view_frame') else ""
                     if play_sound_on_gpt_task_complete and sound_file_to_play_gpt and \
                        os.path.isfile(sound_file_to_play_gpt) and PLAYSOUND_AVAILABLE:
                         play_sound_async(sound_file_to_play_gpt)
@@ -6784,6 +6826,10 @@ class SubtitleApp(ctk.CTk):
         self.update_time_realtime()
 
         # Bắt đầu luồng worker tạo ảnh và truyền toàn bộ payload đi
+        # Lấy SRT string từ payload
+        script_for_slideshow_timing_str = payload.get("original_full_srt_for_hardsub", "")
+        original_plain_text_for_dub_str = payload.get("original_plain_text_for_dub", "")
+        
         thread = threading.Thread(
             target=self._execute_imagen_chain_generation_iterative,
             args=(
@@ -6791,8 +6837,8 @@ class SubtitleApp(ctk.CTk):
                 len(image_prompts), # num_images_per_prompt sẽ bằng tổng số prompt
                 self.cfg.get("imagen_last_aspect_ratio", "16:9"),
                 temp_output_folder,
-                payload, # <-- TRUYỀN TOÀN BỘ PAYLOAD
-                payload, # Truyền lại lần nữa cho tham số text dub
+                payload, # <-- TRUYỀN TOÀN BỘ PAYLOAD (để có thể lấy image_durations_seconds)
+                original_plain_text_for_dub_str, # Truyền string cho backward compatibility
                 target_widget,
                 context, 
                 trigger_dub_chain_flag,
@@ -6872,7 +6918,7 @@ class SubtitleApp(ctk.CTk):
         estimated_scene_durations_s = [float(d) for d in payload_from_previous_step.get("image_durations_seconds", [])]
         original_srt_text = payload_from_previous_step.get("original_full_srt_for_hardsub", "")
 
-        # 2. Tính TỔNG THỜI LƯỢNG THỰC TẾ từ kịch bản gốc
+        # 2. Tính TỔNG THỜI LƯỢNG THỰC TẾ từ kịch bản gốc (bê nguyên code từ file gốc)
         original_timed_segments = self._parse_plain_text_to_srt_data(original_srt_text)
         true_total_duration_s = 0.0
         if original_timed_segments:
@@ -6885,18 +6931,41 @@ class SubtitleApp(ctk.CTk):
         logging.info(f"{log_prefix} Thời lượng thực tế từ kịch bản gốc: {true_total_duration_s:.3f}s")
         
         # 3. Lọc ra thời lượng của các cảnh đã được tạo ảnh thành công
+        # Logic: Trong chain generation, image_paths được trả về theo thứ tự prompts
+        # Nếu có thể khớp index từ tên file (pattern chain_xxx_), dùng index đó
+        # Nếu không, giả định thứ tự của ảnh trong list = thứ tự prompts (0, 1, 2...)
         successful_indices = set()
+        found_pattern_indices = False
+        
         for img_path in image_paths:
             match = re.search(r'chain_(\d{3,})_', os.path.basename(img_path))
-            if match: successful_indices.add(int(match.group(1)))
-
+            if match:
+                successful_indices.add(int(match.group(1)))
+                found_pattern_indices = True
+        
         base_image_durations_seconds = [] # Thời lượng ước tính chỉ của các cảnh thành công
-        for i, duration in enumerate(estimated_scene_durations_s):
-            if i in successful_indices:
-                base_image_durations_seconds.append(duration)
+        
+        if found_pattern_indices and successful_indices:
+            # Nếu tìm thấy index từ tên file, dùng logic khớp index
+            for i, duration in enumerate(estimated_scene_durations_s):
+                if i in successful_indices:
+                    base_image_durations_seconds.append(duration)
+        else:
+            # Nếu không tìm thấy pattern trong tên file (image_service tạo tên khác),
+            # giả định thứ tự ảnh = thứ tự prompts (0, 1, 2, ...)
+            # image_paths đã được sắp xếp theo thứ tự tạo, chỉ cần lấy N ảnh đầu tiên
+            num_successful = len(image_paths)
+            if num_successful <= len(estimated_scene_durations_s):
+                base_image_durations_seconds = estimated_scene_durations_s[:num_successful]
+            else:
+                # Nếu có nhiều ảnh hơn durations (không nên xảy ra), lặp lại duration cuối
+                base_image_durations_seconds = estimated_scene_durations_s[:]
+                if estimated_scene_durations_s:
+                    last_duration = estimated_scene_durations_s[-1]
+                    base_image_durations_seconds.extend([last_duration] * (num_successful - len(estimated_scene_durations_s)))
         
         if len(base_image_durations_seconds) != len(image_paths):
-            logging.error(f"{log_prefix} Lỗi nghiêm trọng: Không thể khớp ảnh thành công với thời lượng của chúng.")
+            logging.error(f"{log_prefix} Lỗi nghiêm trọng: Không thể khớp ảnh thành công với thời lượng của chúng. Số ảnh: {len(image_paths)}, Số durations: {len(base_image_durations_seconds)}, Số estimated_durations: {len(estimated_scene_durations_s)}")
             self._check_completion_and_shutdown()
             return
 
@@ -8425,30 +8494,30 @@ class SubtitleApp(ctk.CTk):
         self.chain_download_sub_dub_active = True
 
         # Chỉ reset danh sách file dubbing nếu có ý định dub
-        if self.download_auto_dub_after_sub_var.get():
+        if self.download_view_frame.download_auto_dub_after_sub_var.get():
             self.files_for_chained_dubbing = [] # Reset/khởi tạo danh sách cho chuỗi mới
             logging.info("   >>> Chế độ ALL: Sẽ tự động Thuyết Minh sau khi Sub.")
         else:
             logging.info("   >>> Chế độ ALL: Chỉ Tải và Sub.")
     
         # --- Bước 1: Reset bộ đếm lỗi và xác định danh sách URL cần xử lý ---
-        self.download_retry_counts.clear()
-        logging.info("Đã xóa self.download_retry_counts cho lượt Tải & Sub mới.")
-        # self.globally_completed_urls KHÔNG được clear ở đây.
+        self.download_view_frame.download_retry_counts.clear()
+        logging.info("Đã xóa self.download_view_frame.download_retry_counts cho lượt Tải & Sub mới.")
+        # self.download_view_frame.globally_completed_urls KHÔNG được clear ở đây.
 
         urls_to_process_initial = []
         source_of_urls = "" 
 
-        if hasattr(self, 'download_urls_list') and self.download_urls_list:
-            source_of_urls = "hàng chờ hiện tại (self.download_urls_list)"
-            logging.info(f"Sẽ sử dụng {len(self.download_urls_list)} link từ {source_of_urls} cho Tải & Sub.")
-            # urls_to_process_initial sẽ được lấy từ self.download_urls_list ở dưới
+        if hasattr(self.download_view_frame, 'download_urls_list') and self.download_view_frame.download_urls_list:
+            source_of_urls = "hàng chờ hiện tại (self.download_view_frame.download_urls_list)"
+            logging.info(f"Sẽ sử dụng {len(self.download_view_frame.download_urls_list)} link từ {source_of_urls} cho Tải & Sub.")
+            # urls_to_process_initial sẽ được lấy từ self.download_view_frame.download_urls_list ở dưới
             
         elif hasattr(self, 'download_view_frame') and hasattr(self.download_view_frame, 'download_url_text') and self.download_view_frame.download_url_text:
             urls_text_from_box = self.download_view_frame.download_url_text.get("1.0", "end-1c").strip()
             if urls_text_from_box:
                 source_of_urls = "ô nhập liệu textbox"
-                logging.info(f"Hàng chờ (self.download_urls_list) rỗng. Đọc link từ {source_of_urls} cho Tải & Sub.")
+                logging.info(f"Hàng chờ (self.download_view_frame.download_urls_list) rỗng. Đọc link từ {source_of_urls} cho Tải & Sub.")
                 
                 temp_urls_from_box = []
                 seen_urls_in_box = set()
@@ -8462,8 +8531,8 @@ class SubtitleApp(ctk.CTk):
                          logging.warning(f"Bỏ qua URL không hợp lệ từ textbox: {stripped_url}")
                 
                 if temp_urls_from_box:
-                    self.download_urls_list = list(temp_urls_from_box)
-                    logging.info(f"Đã cập nhật self.download_urls_list với {len(self.download_urls_list)} link từ {source_of_urls} cho Tải & Sub.")
+                    self.download_view_frame.download_urls_list = list(temp_urls_from_box)
+                    logging.info(f"Đã cập nhật self.download_view_frame.download_urls_list với {len(self.download_view_frame.download_urls_list)} link từ {source_of_urls} cho Tải & Sub.")
                 else:
                     messagebox.showwarning("Link không hợp lệ", f"Không tìm thấy link hợp lệ nào trong {source_of_urls}.", parent=self)
                     return
@@ -8474,50 +8543,50 @@ class SubtitleApp(ctk.CTk):
             messagebox.showerror("Lỗi Giao Diện", "Không tìm thấy nguồn nhập link (textbox hoặc hàng chờ) cho Tải & Sub.", parent=self)
             return
 
-        if not self.download_urls_list:
+        if not self.download_view_frame.download_urls_list:
             messagebox.showwarning("Hàng chờ trống", f"Không có link nào để xử lý từ {source_of_urls} cho Tải & Sub.", parent=self)
             return
-        urls_to_process_initial = list(self.download_urls_list)
+        urls_to_process_initial = list(self.download_view_frame.download_urls_list)
 
 
         # --- Bước 2: Kiểm tra các tùy chọn khác ---
-        download_path = self.download_path_var.get()
+        download_path = self.download_view_frame.download_path_var.get()
         if not download_path:
             messagebox.showerror("Lỗi Đường Dẫn", "Vui lòng chọn thư mục lưu tải về hợp lệ.", parent=self)
             return
-        if self.download_rename_var.get() and not self.download_rename_box_var.get().strip():
+        if self.download_view_frame.download_rename_var.get() and not self.download_view_frame.download_rename_box_var.get().strip():
             messagebox.showwarning("Thiếu tên file", "Vui lòng nhập tên chung khi chọn đổi tên hàng loạt!", parent=self)
             return
-        sound_file_path = self.download_sound_path_var.get()
-        if self.download_sound_var.get() and (not sound_file_path or not os.path.isfile(sound_file_path)):
+        sound_file_path = self.download_view_frame.download_sound_path_var.get()
+        if self.download_view_frame.download_sound_var.get() and (not sound_file_path or not os.path.isfile(sound_file_path)):
             messagebox.showwarning("Thiếu file âm thanh", "Vui lòng chọn file âm thanh hợp lệ hoặc bỏ check 'Phát nhạc'.", parent=self)
             return
 
         # --- Bước 3: Chuẩn bị config cho thread ---
         config = {
             # "urls": urls_to_process_initial, # Không cần truyền list URL vào config nữa
-            "mode": self.download_mode_var.get(), 
+            "mode": self.download_view_frame.download_mode_var.get(), 
             "folder": download_path,
-            "v_quality": self.download_video_quality_var.get().replace("p", ""),
-            "a_quality": self.download_audio_quality_var.get().replace("k", ""),
-            "rename_all": self.download_rename_var.get(),
-            "base_name": self.download_rename_box_var.get().strip(),
-            "do_sound": self.download_sound_var.get(),
+            "v_quality": self.download_view_frame.download_video_quality_var.get().replace("p", ""),
+            "a_quality": self.download_view_frame.download_audio_quality_var.get().replace("k", ""),
+            "rename_all": self.download_view_frame.download_rename_var.get(),
+            "base_name": self.download_view_frame.download_rename_box_var.get().strip(),
+            "do_sound": self.download_view_frame.download_sound_var.get(),
             "sound_file": sound_file_path,
-            "do_shutdown": self.download_shutdown_var.get(),
-            "stop_on_error": self.download_stop_on_error_var.get(),
-            "download_playlist": self.download_playlist_var.get(),
+            "do_shutdown": self.download_view_frame.download_shutdown_var.get(),
+            "stop_on_error": self.download_view_frame.download_stop_on_error_var.get(),
+            "download_playlist": self.download_view_frame.download_playlist_var.get(),
             "auto_sub_after_download": True,
-            "use_cookies": self.download_use_cookies_var.get(),
-            "cookies_file": self.download_cookies_path_var.get(),            
-            "and_then_dub": self.download_auto_dub_after_sub_var.get()
+            "use_cookies": self.download_view_frame.download_use_cookies_var.get(),
+            "cookies_file": self.download_view_frame.download_cookies_path_var.get(),            
+            "and_then_dub": self.download_view_frame.download_auto_dub_after_sub_var.get()
         }
         logging.info(f"Config TẢI & SUB đã chuẩn bị. Số link ban đầu trong hàng chờ: {len(urls_to_process_initial)} từ {source_of_urls}.")
         # logging.debug(f"Config chi tiết: {config}")
 
         # --- Bước 4: Chuẩn bị giao diện và trạng thái ---
-        self.current_download_url = None
-        self.update_download_queue_display()
+        self.download_view_frame.current_download_url = None
+        self.download_view_frame.update_download_queue_display()
 
         # Xóa log download sử dụng method của DownloadTab
         if hasattr(self, 'download_view_frame') and hasattr(self.download_view_frame, 'clear_download_log'):
@@ -8531,11 +8600,11 @@ class SubtitleApp(ctk.CTk):
         self.download_view_frame.update_download_progress(0)
         
         self.download_view_frame.log_download(f"🚀 Bắt đầu quá trình TẢI & TỰ ĐỘNG SUB (Nguồn: {source_of_urls})...")
-        self.download_view_frame.log_download(f"   - Số link hiện có trong hàng chờ: {len(self.download_urls_list)}")
+        self.download_view_frame.log_download(f"   - Số link hiện có trong hàng chờ: {len(self.download_view_frame.download_urls_list)}")
 
         # --- Bước 5: Lưu cài đặt và ghi nhận yêu cầu tắt máy ---
         self.save_current_config()
-        self.shutdown_requested_by_task = self.download_shutdown_var.get()
+        self.shutdown_requested_by_task = self.download_view_frame.download_shutdown_var.get()
         logging.info(f"Đã bắt đầu tác vụ Tải & Auto Sub. Yêu cầu tắt máy: {self.shutdown_requested_by_task}")
 
         self.start_time = time.time()
@@ -8543,15 +8612,15 @@ class SubtitleApp(ctk.CTk):
 
         # --- Bước 6: Bắt đầu luồng tải ---
         try:
-            if self.download_thread and self.download_thread.is_alive():
+            if self.download_view_frame.download_thread and self.download_view_frame.download_thread.is_alive():
                  logging.warning("Luồng tải đang chạy!")
                  messagebox.showwarning("Đang xử lý", "Quá trình tải khác đang chạy, vui lòng đợi.", parent=self)
                  self.download_view_frame.set_download_ui_state(downloading=True)
                  return
             
-            logging.info(f"CHUẨN BỊ TẠO THREAD (start_download_and_sub): self.download_urls_list lúc này = {self.download_urls_list}")
-            self.download_thread = threading.Thread(target=self.run_download, args=(config,), daemon=True, name="DownloadAndSubWorker")
-            self.download_thread.start()
+            logging.info(f"CHUẨN BỊ TẠO THREAD (start_download_and_sub): self.download_view_frame.download_urls_list lúc này = {self.download_view_frame.download_urls_list}")
+            self.download_view_frame.download_thread = threading.Thread(target=self.download_view_frame.run_download, args=(config,), daemon=True, name="DownloadAndSubWorker")
+            self.download_view_frame.download_thread.start()
             logging.info("Đã bắt đầu luồng Tải & Auto Sub.")
         except Exception as e:
             logging.error(f"Không thể bắt đầu luồng Tải & Auto Sub: {e}", exc_info=True)
@@ -11183,7 +11252,7 @@ class SubtitleApp(ctk.CTk):
 
         logging.info(f"--- BẮT ĐẦU XỬ LÝ HÀNG LOẠT GHÉP THỦ CÔNG ({len(self.manual_sub_queue)} tác vụ) ---")
         # --- KIỂM TRA TẮT MÁY ---
-        if hasattr(self, 'download_shutdown_var') and self.download_shutdown_var.get():
+        if hasattr(self, 'download_view_frame') and hasattr(self.download_view_frame, 'download_shutdown_var') and self.download_view_frame.download_shutdown_var.get():
             self.shutdown_requested_by_task = True
             logging.info(f"[ManualBatch] Tác vụ Manual-Sub: 'Hẹn giờ tắt máy' được BẬT. Ghi nhận yêu cầu.")
         else:
@@ -11524,162 +11593,25 @@ class SubtitleApp(ctk.CTk):
     # Hàm quản lý hàng chờ Download: Di chuyển một mục lên hoặc xuống
     def move_item_in_download_queue(self, current_index_in_display, direction):
         """
-        Di chuyển một mục trong hàng chờ tải xuống (self.download_urls_list) lên hoặc xuống.
-        Lưu ý: current_index_in_display là chỉ số trong danh sách đang hiển thị (đã loại trừ current_download_url).
+        Wrapper gọi đến DownloadTab.move_item_in_download_queue()
+        Hàm đã được di chuyển sang ui/tabs/download_tab.py (DownloadTab.move_item_in_download_queue)
         """
-        if self.is_downloading and self.current_download_url is not None:
-            # Chỉ cho phép sắp xếp các mục chưa được tải
-            pass
-        elif self.is_downloading:
-            messagebox.showwarning("Đang bận", "Không thể sắp xếp lại hàng chờ khi đang tải xuống và chưa có mục nào được xử lý.", parent=self)
-            return
-        
-        waiting_urls_only = []
-        if hasattr(self, 'download_urls_list') and self.download_urls_list:
-            if self.current_download_url:
-                waiting_urls_only = [url for url in self.download_urls_list if url != self.current_download_url]
-            else:
-                waiting_urls_only = list(self.download_urls_list)
-
-        queue_len = len(waiting_urls_only)
-
-        if not 0 <= current_index_in_display < queue_len:
-            logging.warning(f"Yêu cầu di chuyển mục tải xuống ở vị trí hiển thị không hợp lệ: {current_index_in_display} (độ dài hàng chờ: {queue_len})")
-            return
-
-        actual_current_index_in_main_list = -1
-        item_to_move_value = waiting_urls_only[current_index_in_display]
-
-        # Tìm vị trí thực sự của item_to_move_value trong self.download_urls_list
-        # (quan trọng nếu self.download_urls_list có cả current_download_url)
-        try:
-            # Tìm vị trí của item_to_move TRONG self.download_urls_list
-            # Điều này quan trọng vì self.download_urls_list có thể có current_download_url ở đầu
-            # mà không có trong waiting_urls_only.
-            indices_in_main_list = [i for i, x in enumerate(self.download_urls_list) if x == item_to_move_value]
-            if not indices_in_main_list:
-                logging.error(f"Không tìm thấy mục '{item_to_move_value}' trong self.download_urls_list chính.")
-                return
-            
-            # Ưu tiên index lớn hơn nếu current_download_url trùng với item_to_move
-            # (Trường hợp này hiếm khi xảy ra nếu logic đúng, nhưng để phòng ngừa)
-            if self.current_download_url == item_to_move_value and len(indices_in_main_list) > 1:
-                 actual_current_index_in_main_list = indices_in_main_list[-1] # Lấy index cuối nếu có trùng
-            else:
-                 actual_current_index_in_main_list = indices_in_main_list[0]
-
-        except ValueError:
-            logging.error(f"Lỗi không tìm thấy mục '{item_to_move_value}' trong self.download_urls_list chính.")
-            return
-
-
-        new_actual_index_in_main_list = -1
-
-        if direction == "up" and current_index_in_display > 0:
-            # Mục tiêu là mục ở vị trí current_index_in_display - 1 trong waiting_urls_only
-            target_item_value = waiting_urls_only[current_index_in_display - 1]
-            # Tìm vị trí của target_item_value trong self.download_urls_list
-            try:
-                target_indices_in_main = [i for i, x in enumerate(self.download_urls_list) if x == target_item_value]
-                if not target_indices_in_main: return # Should not happen
-                new_actual_index_in_main_list = target_indices_in_main[0]
-            except ValueError: return
-        elif direction == "down" and current_index_in_display < queue_len - 1:
-            # Mục tiêu là mục ở vị trí current_index_in_display + 1 trong waiting_urls_only
-            target_item_value = waiting_urls_only[current_index_in_display + 1]
-            # Tìm vị trí của target_item_value trong self.download_urls_list
-            try:
-                target_indices_in_main = [i for i, x in enumerate(self.download_urls_list) if x == target_item_value]
-                if not target_indices_in_main: return
-                new_actual_index_in_main_list = target_indices_in_main[0]
-            except ValueError: return
+        if hasattr(self, 'download_view_frame') and hasattr(self.download_view_frame, 'move_item_in_download_queue'):
+            self.download_view_frame.move_item_in_download_queue(current_index_in_display, direction)
         else:
-            logging.debug(f"Không thể di chuyển mục tải xuống {current_index_in_display} theo hướng '{direction}'.")
-            return
-
-        if new_actual_index_in_main_list != -1 and actual_current_index_in_main_list != -1 :
-            try:
-                # Di chuyển trong self.download_urls_list
-                item_value = self.download_urls_list.pop(actual_current_index_in_main_list)
-
-                final_insert_position = new_actual_index_in_main_list
-                if direction == "down" and new_actual_index_in_main_list < actual_current_index_in_main_list :
-                     pass
-                elif direction == "up" and new_actual_index_in_main_list > actual_current_index_in_main_list:
-                    pass
-
-
-                self.download_urls_list.insert(final_insert_position, item_value)
-                
-                logging.info(f"Đã di chuyển URL trong hàng chờ download từ vị trí thực tế {actual_current_index_in_main_list} sang {final_insert_position}.")
-                
-                self.update_download_queue_display()
-                self.update_status(f"ℹ️ Đã cập nhật thứ tự hàng chờ download.")
-            except IndexError:
-                logging.error(f"Lỗi IndexError khi di chuyển mục trong hàng chờ download. Actual Current: {actual_current_index_in_main_list}, New Actual Target: {new_actual_index_in_main_list}")
-            except Exception as e:
-                logging.error(f"Lỗi không xác định khi di chuyển mục trong hàng chờ download: {e}", exc_info=True)
-                messagebox.showerror("Lỗi Sắp xếp", f"Đã xảy ra lỗi khi sắp xếp lại hàng chờ download:\n{e}", parent=self)
+            logging.error("DownloadTab không có hàm move_item_in_download_queue()")
 
 
     # Hàm quản lý hàng chờ Download: Xóa một mục khỏi hàng chờ    
     def remove_item_from_download_queue(self, index_in_display):
         """
-        Xóa một mục khỏi hàng chờ tải xuống (self.download_urls_list) dựa trên
-        chỉ số hiển thị của nó trong danh sách các link đang chờ.
+        Wrapper gọi đến DownloadTab.remove_item_from_download_queue()
+        Hàm đã được di chuyển sang ui/tabs/download_tab.py (DownloadTab.remove_item_from_download_queue)
         """
-        if self.is_downloading and self.current_download_url is not None:
-            # Chỉ cho phép xóa các mục chưa được tải (đang trong danh sách chờ)
-            pass
-        elif self.is_downloading:
-            messagebox.showwarning("Đang bận", "Không thể xóa link khỏi hàng chờ khi đang tải và chưa có mục nào được chọn xử lý.", parent=self)
-            return
-
-        # Xác định danh sách các URL đang thực sự "chờ" (không bao gồm URL đang tải)
-        waiting_urls_only = []
-        if hasattr(self, 'download_urls_list') and self.download_urls_list:
-            if self.current_download_url:
-                waiting_urls_only = [url for url in self.download_urls_list if url != self.current_download_url]
-            else:
-                # Nếu không có current_download_url (chưa bắt đầu tải hoặc đã xong hết)
-                waiting_urls_only = list(self.download_urls_list)
-        
-        if not 0 <= index_in_display < len(waiting_urls_only):
-            logging.warning(f"Yêu cầu xóa mục tải xuống ở vị trí hiển thị không hợp lệ: {index_in_display}")
-            return
-
-        url_to_remove = waiting_urls_only[index_in_display]
-
-        try:
-            offset = 0
-            if self.current_download_url:
-                try:
-                    pass # Logic tìm index thực sự sẽ phức tạp nếu current_download_url trùng với link trong waiting_urls_only
-                except ValueError:
-                    pass # current_download_url không có trong list (lạ)
-
-
-            # Cách đơn giản và an toàn hơn: dựa vào giá trị của url_to_remove
-            if url_to_remove in self.download_urls_list:
-                self.download_urls_list.remove(url_to_remove) # Xóa lần xuất hiện đầu tiên của giá trị này
-                
-                # Cũng xóa khỏi bộ đếm lỗi và danh sách hoàn thành (nếu có và nếu cần)
-                self.download_retry_counts.pop(url_to_remove, None)
-                # self.globally_completed_urls.discard(url_to_remove) # Thường thì link lỗi không nằm trong đây
-                                                                    # nhưng nếu người dùng muốn xóa link đã hoàn thành khỏi danh sách (nếu hiển thị)
-
-                logging.info(f"Đã xóa URL '{url_to_remove[:60]}...' khỏi hàng chờ download.")
-                
-                self.update_download_queue_display() # Cập nhật giao diện
-                self.update_status(f"ℹ️ Đã xóa 1 link khỏi hàng chờ download.")
-            else:
-                logging.warning(f"Không tìm thấy URL '{url_to_remove[:60]}...' trong self.download_urls_list để xóa.")
-
-        except ValueError: # Xảy ra nếu url_to_remove không có trong self.download_urls_list (dù đã kiểm tra)
-            logging.error(f"Lỗi ValueError khi cố xóa '{url_to_remove[:60]}...' (không tìm thấy).", exc_info=True)
-        except Exception as e:
-            logging.error(f"Lỗi không xác định khi xóa mục khỏi hàng chờ download: {e}", exc_info=True)
-            messagebox.showerror("Lỗi Xóa Link", f"Đã xảy ra lỗi khi xóa link:\n{e}", parent=self)
+        if hasattr(self, 'download_view_frame') and hasattr(self.download_view_frame, 'remove_item_from_download_queue'):
+            self.download_view_frame.remove_item_from_download_queue(index_in_display)
+        else:
+            logging.error("DownloadTab không có hàm remove_item_from_download_queue()")
 
 
 # Hàm hành động: Tải một file phụ đề đã có vào trình chỉnh sửa
@@ -11880,16 +11812,16 @@ class SubtitleApp(ctk.CTk):
                   return
 
         # --- THÊM LOGIC KIỂM TRA VÀ ĐẶT YÊU CẦU TẮT MÁY CHO SUB ĐƠN LẺ ---
-        # Giả sử self.download_shutdown_var là checkbox chung cho việc tắt máy
-        if hasattr(self, 'download_shutdown_var') and hasattr(self, 'shutdown_requested_by_task'):
-            if self.download_shutdown_var.get():
+        # Giả sử self.download_view_frame.download_shutdown_var là checkbox chung cho việc tắt máy
+        if hasattr(self, 'download_view_frame') and hasattr(self.download_view_frame, 'download_shutdown_var') and hasattr(self, 'shutdown_requested_by_task'):
+            if self.download_view_frame.download_shutdown_var.get():
                 self.shutdown_requested_by_task = True
                 logging.info(f"[AutoSubAll] Tác vụ Sub-Only: 'Hẹn giờ tắt máy' được BẬT. Ghi nhận yêu cầu.")
             else:
                 self.shutdown_requested_by_task = False
                 logging.info(f"[AutoSubAll] Tác vụ Sub-Only: 'Hẹn giờ tắt máy' được TẮT.")
         else:
-            logging.warning("[AutoSubAll] Không tìm thấy 'download_shutdown_var' hoặc 'shutdown_requested_by_task'. Không thể đặt yêu cầu tắt máy cho tác vụ Sub-Only.")
+            logging.warning("[AutoSubAll] Không tìm thấy 'download_view_frame.download_shutdown_var' hoặc 'shutdown_requested_by_task'. Không thể đặt yêu cầu tắt máy cho tác vụ Sub-Only.")
         # --- KẾT THÚC THÊM LOGIC ---
 
         self._set_subtitle_tab_ui_state(True)
@@ -12187,8 +12119,8 @@ class SubtitleApp(ctk.CTk):
                 self.files_for_chained_dubbing = [] 
 
                 try: 
-                    sound_enabled = self.download_sound_var.get() 
-                    sound_file_path = self.download_sound_path_var.get() 
+                    sound_enabled = self.download_view_frame.download_sound_var.get() if hasattr(self, 'download_view_frame') else False
+                    sound_file_path = self.download_view_frame.download_sound_path_var.get() if hasattr(self, 'download_view_frame') else "" 
                     if sound_enabled and sound_file_path and os.path.isfile(sound_file_path) and PLAYSOUND_AVAILABLE: 
                          play_sound_async(sound_file_path) 
                 except Exception as sound_err: 
@@ -13092,7 +13024,7 @@ class SubtitleApp(ctk.CTk):
                 
                 # Hiển thị thông báo không chặn cho người dùng
                 fallback_error_msg = f"Lỗi biên tập Gemini cho '{os.path.basename(input_audio_file)}':\n\n{str(e_gemini_block)[:200]}\n\nSẽ tiếp tục với kịch bản gốc từ Whisper."
-                self.after(0, self._show_non_blocking_error_popup, "Lỗi Biên tập Gemini (Fallback)", fallback_error_msg, failed_item_identifier=input_audio_file)
+                self.after(0, lambda: self._show_non_blocking_error_popup("Lỗi Biên tập Gemini (Fallback)", fallback_error_msg, failed_item_identifier=input_audio_file))
                 
                 # Sử dụng kịch bản gốc từ Whisper
                 final_content_for_chain = plain_text_for_editing
@@ -13107,7 +13039,7 @@ class SubtitleApp(ctk.CTk):
             self._handle_gemini_script_editing_result_for_chain(
                 processed_script=final_content_for_chain, # Dùng kịch bản cuối cùng (đã biên tập hoặc fallback)
                 error_message=None, # Luôn là None vì đã xử lý lỗi và fallback
-                target_widget=self.subtitle_textbox,
+                target_widget=self.subtitle_view_frame.subtitle_textbox if hasattr(self, 'subtitle_view_frame') and hasattr(self.subtitle_view_frame, 'subtitle_textbox') else None,
                 context="audio_to_video_chain",
                 trigger_imagen_chain_flag=True,
                 trigger_dub_chain_flag=False,
@@ -13121,7 +13053,7 @@ class SubtitleApp(ctk.CTk):
         except Exception as e:
             logging.error(f"[{thread_name}] Lỗi trong quy trình Audio-to-Video cho file '{input_audio_file}': {e}", exc_info=True)
             self.after(0, lambda: self.update_status(f"❌ Lỗi xử lý audio: {os.path.basename(input_audio_file)}"))
-            self.after(0, self._show_non_blocking_error_popup, "Lỗi Quy trình Audio > Video", f"Đã xảy ra lỗi khi xử lý file:\n'{os.path.basename(input_audio_file)}'\n\nLỗi: {str(e)[:200]}...", failed_item_identifier=input_audio_file)
+            self.after(0, lambda: self._show_non_blocking_error_popup("Lỗi Quy trình Audio > Video", f"Đã xảy ra lỗi khi xử lý file:\n'{os.path.basename(input_audio_file)}'\n\nLỗi: {str(e)[:200]}...", failed_item_identifier=input_audio_file))
         
         finally:
             if not task_object.get('handoff_successful', False):
@@ -17618,28 +17550,18 @@ class SubtitleApp(ctk.CTk):
                 self.cfg["sub_pacing_fast_cps_multiplier"] = 1.1 # Mặc định nếu lỗi
 
         # Thu thập Cấu hình Downloader
-        self.cfg["download_playlist"] = self.download_playlist_var.get()
-        self.cfg["download_path"] = self.download_path_var.get()
-        self.cfg["download_mode"] = self.download_mode_var.get()
-        self.cfg["download_video_quality"] = self.download_video_quality_var.get()
-        self.cfg["download_audio_quality"] = self.download_audio_quality_var.get()
-        self.cfg["download_sound_enabled"] = self.download_sound_var.get()
-        self.cfg["download_sound_path"] = self.download_sound_path_var.get()
-        self.cfg["download_shutdown_enabled"] = self.download_shutdown_var.get()
-        self.cfg["download_rename_enabled"] = self.download_rename_var.get()
-        self.cfg["download_rename_base_name"] = self.download_rename_box_var.get()
-        self.cfg["download_stop_on_error"] = self.download_stop_on_error_var.get()
+        # Các biến download đã được di chuyển sang DownloadTab, gọi save_config() của nó
+        if hasattr(self, 'download_view_frame') and hasattr(self.download_view_frame, 'save_config'):
+            self.download_view_frame.save_config()
+        
+        # Các biến này vẫn ở trong Piu.py (có thể dùng chung)
         self.cfg["sheet_id"] = self.sheet_id_var.get()
         self.cfg["sheet_range"] = self.sheet_range_var.get()
         self.cfg["disable_auto_sheet_check"] = self.disable_auto_sheet_check_var.get()
         self.cfg["google_service_account_path"] = self.google_key_path_var.get() 
         self.cfg["translation_engine"] = self.translation_engine_var.get()      
         self.cfg["openai_translation_style"] = self.openai_translation_style_var.get()
-        self.cfg["pause_for_edit"] = self.pause_for_edit_var.get()
-        self.cfg["download_auto_dub_after_sub"] = self.download_auto_dub_after_sub_var.get()
-        self.cfg["auto_upload_after_download"] = self.auto_upload_after_download_var.get()
-        self.cfg["download_use_cookies"] = self.download_use_cookies_var.get()
-        self.cfg["download_cookies_path"] = self.download_cookies_path_var.get()        
+        self.cfg["pause_for_edit"] = self.pause_for_edit_var.get()        
 
         # LƯU CẤU HÌNH API KEY  
         self.cfg["openai_api_key"] = self.openai_key_var.get()
@@ -18276,40 +18198,44 @@ class SubtitleApp(ctk.CTk):
                 _set_var_if_nonempty(self.google_key_path_var, new_cfg.get("google_service_account_path"))
 
             # --- Tab Tải Xuống ---
-            if hasattr(self, 'download_playlist_var'):
-                self.download_playlist_var.set(new_cfg.get("download_playlist", False))
-            if hasattr(self, 'download_path_var'):
-                self.download_path_var.set(new_cfg.get("download_path", get_default_downloads_folder()))
-            if hasattr(self, 'download_mode_var'):
-                self.download_mode_var.set(new_cfg.get("download_mode", "video"))
-            if hasattr(self, 'download_video_quality_var'):
-                self.download_video_quality_var.set(new_cfg.get("download_video_quality", "1080p"))
-            if hasattr(self, 'download_audio_quality_var'):
-                self.download_audio_quality_var.set(new_cfg.get("download_audio_quality", "320k"))
-            if hasattr(self, 'download_sound_var'):
-                self.download_sound_var.set(new_cfg.get("download_sound_enabled", False))
-            if hasattr(self, 'download_sound_path_var'):
-                self.download_sound_path_var.set(new_cfg.get("download_sound_path", ""))
-            if hasattr(self, 'download_shutdown_var'):
-                self.download_shutdown_var.set(new_cfg.get("download_shutdown_enabled", False))
-            if hasattr(self, 'download_rename_var'):
-                self.download_rename_var.set(new_cfg.get("download_rename_enabled", False))
-            if hasattr(self, 'download_rename_box_var'):
-                self.download_rename_box_var.set(new_cfg.get("download_rename_base_name", ""))
-            if hasattr(self, 'download_stop_on_error_var'):
-                self.download_stop_on_error_var.set(new_cfg.get("download_stop_on_error", False))
+            # Các biến download đã được di chuyển sang DownloadTab, khôi phục qua download_view_frame
+            if hasattr(self, 'download_view_frame'):
+                df = self.download_view_frame
+                if hasattr(df, 'download_playlist_var'):
+                    df.download_playlist_var.set(new_cfg.get("download_playlist", False))
+                if hasattr(df, 'download_path_var'):
+                    df.download_path_var.set(new_cfg.get("download_path", get_default_downloads_folder()))
+                if hasattr(df, 'download_mode_var'):
+                    df.download_mode_var.set(new_cfg.get("download_mode", "video"))
+                if hasattr(df, 'download_video_quality_var'):
+                    df.download_video_quality_var.set(new_cfg.get("download_video_quality", "1080p"))
+                if hasattr(df, 'download_audio_quality_var'):
+                    df.download_audio_quality_var.set(new_cfg.get("download_audio_quality", "320k"))
+                if hasattr(df, 'download_sound_var'):
+                    df.download_sound_var.set(new_cfg.get("download_sound_enabled", False))
+                if hasattr(df, 'download_sound_path_var'):
+                    df.download_sound_path_var.set(new_cfg.get("download_sound_path", ""))
+                if hasattr(df, 'download_shutdown_var'):
+                    df.download_shutdown_var.set(new_cfg.get("download_shutdown_enabled", False))
+                if hasattr(df, 'download_rename_var'):
+                    df.download_rename_var.set(new_cfg.get("download_rename_enabled", False))
+                if hasattr(df, 'download_rename_box_var'):
+                    df.download_rename_box_var.set(new_cfg.get("download_rename_base_name", ""))
+                if hasattr(df, 'download_stop_on_error_var'):
+                    df.download_stop_on_error_var.set(new_cfg.get("download_stop_on_error", False))
+                if hasattr(df, 'download_auto_dub_after_sub_var'):
+                    df.download_auto_dub_after_sub_var.set(new_cfg.get("download_auto_dub_after_sub", False))
+                if hasattr(df, 'download_use_cookies_var'):
+                    df.download_use_cookies_var.set(new_cfg.get("download_use_cookies", False))
+                if hasattr(df, 'download_cookies_path_var'):
+                    df.download_cookies_path_var.set(new_cfg.get("download_cookies_path", ""))
+            # Các biến sheet vẫn ở trong Piu.py (dùng chung)
             if hasattr(self, 'sheet_id_var'):
                 self.sheet_id_var.set(new_cfg.get("sheet_id", ""))
             if hasattr(self, 'sheet_range_var'):
                 self.sheet_range_var.set(new_cfg.get("sheet_range", "Sheet1!B2:B"))
             if hasattr(self, 'disable_auto_sheet_check_var'):
-                self.disable_auto_sheet_check_var.set(new_cfg.get("disable_auto_sheet_check", False))
-            if hasattr(self, 'download_auto_dub_after_sub_var'):
-                self.download_auto_dub_after_sub_var.set(new_cfg.get("download_auto_dub_after_sub", False))
-            if hasattr(self, 'download_use_cookies_var'):
-                self.download_use_cookies_var.set(new_cfg.get("download_use_cookies", False))
-            if hasattr(self, 'download_cookies_path_var'):
-                self.download_cookies_path_var.set(new_cfg.get("download_cookies_path", ""))                
+                self.disable_auto_sheet_check_var.set(new_cfg.get("disable_auto_sheet_check", False))                
 
             # --- Tab Phụ Đề ---
             if hasattr(self, 'source_lang_var'):
@@ -18752,211 +18678,27 @@ class SubtitleApp(ctk.CTk):
     # Hàm hành động: Bắt đầu quá trình tải xuống (chỉ tải)
     def start_download(self):
         """
-        Lấy thông tin từ UI (ưu tiên self.download_urls_list, sau đó đến textbox),
-        kiểm tra, reset retry counts, và bắt đầu quá trình tải xuống trong một thread mới.
-        Chỉ thực hiện tải, không tự động sub.
+        Wrapper gọi đến DownloadTab.start_download()
+        Hàm đã được di chuyển sang ui/tabs/download_tab.py (DownloadTab.start_download)
         """
-        logging.info("--- Nhấn nút Bắt đầu Tải (Chỉ Tải) ---")
-
-        # --- Bước 1: Reset bộ đếm lỗi và xác định danh sách URL cần xử lý ---
-        self.download_retry_counts.clear() 
-        logging.info("Đã xóa self.download_retry_counts cho lượt tải mới.")
-        # self.globally_completed_urls KHÔNG được clear ở đây để nhớ các link đã hoàn thành trong cả session.
-
-        urls_to_process_initial = [] # Danh sách URL ban đầu để truyền cho config (chủ yếu để log)
-        source_of_urls = ""
-
-        if hasattr(self, 'download_urls_list') and self.download_urls_list:
-            source_of_urls = "hàng chờ hiện tại (self.download_urls_list)"
-            logging.info(f"Sẽ sử dụng {len(self.download_urls_list)} link từ {source_of_urls}.")
-            # urls_to_process_initial sẽ được lấy từ self.download_urls_list ở dưới nếu cần
-        elif hasattr(self, 'download_view_frame') and hasattr(self.download_view_frame, 'download_url_text') and self.download_view_frame.download_url_text:
-            # Ưu tiên 2: Nếu self.download_urls_list rỗng, đọc từ textbox
-            urls_text_from_box = self.download_view_frame.download_url_text.get("1.0", "end-1c").strip()
-            if urls_text_from_box:
-                source_of_urls = "ô nhập liệu textbox"
-                logging.info(f"Hàng chờ (self.download_urls_list) rỗng. Đọc link từ {source_of_urls}.")
-                
-                temp_urls_from_box = []
-                seen_urls_in_box = set()
-                for line in urls_text_from_box.splitlines():
-                    stripped_url = line.strip()
-                    if stripped_url and stripped_url.startswith(('http://', 'https://')):
-                        if stripped_url not in seen_urls_in_box:
-                            temp_urls_from_box.append(stripped_url)
-                            seen_urls_in_box.add(stripped_url)
-                    elif stripped_url:
-                         logging.warning(f"Bỏ qua URL không hợp lệ từ textbox: {stripped_url}")
-                
-                if temp_urls_from_box:
-                    # Cập nhật self.download_urls_list bằng danh sách mới từ textbox
-                    self.download_urls_list = list(temp_urls_from_box) 
-                    logging.info(f"Đã cập nhật self.download_urls_list với {len(self.download_urls_list)} link từ {source_of_urls}.")
-                else:
-                    messagebox.showwarning("Link không hợp lệ", f"Không tìm thấy link hợp lệ nào trong {source_of_urls}.", parent=self)
-                    return
-            else: # Cả self.download_urls_list và textbox đều rỗng
-                messagebox.showwarning("Thiếu link", "Vui lòng nhập link vào ô hoặc thêm từ Google Sheet.\nHàng chờ hiện tại cũng đang trống.", parent=self)
-                return
-        else: # Lỗi cấu trúc app
-            messagebox.showerror("Lỗi Giao Diện", "Không tìm thấy nguồn nhập link (textbox hoặc hàng chờ).", parent=self)
-            return
-
-        # Sau khi xác định nguồn, urls_to_process_initial là bản sao của self.download_urls_list hiện tại
-        if not self.download_urls_list: 
-            messagebox.showwarning("Hàng chờ trống", f"Không có link nào để xử lý từ {source_of_urls}.", parent=self)
-            return
-        urls_to_process_initial = list(self.download_urls_list) # Để log số lượng ban đầu
-
-        # --- Bước 2: Kiểm tra các tùy chọn khác ---
-        download_path = self.download_path_var.get()
-        if not download_path:
-             messagebox.showerror("Lỗi Đường Dẫn", "Vui lòng chọn thư mục lưu tải về hợp lệ.", parent=self)
-             return
-        if self.download_rename_var.get() and not self.download_rename_box_var.get().strip():
-             messagebox.showwarning("Thiếu tên file", "Vui lòng nhập tên chung khi chọn đổi tên hàng loạt!", parent=self)
-             return
-        sound_file_path = self.download_sound_path_var.get()
-        if self.download_sound_var.get() and (not sound_file_path or not os.path.isfile(sound_file_path)):
-            messagebox.showwarning("Thiếu file âm thanh", "Vui lòng chọn file âm thanh hợp lệ hoặc bỏ check 'Phát nhạc'.", parent=self)
-            return
-
-        # --- Bước 3: Chuẩn bị config cho thread ---
-        config = {
-            # "urls": urls_to_process_initial, # Không cần truyền list URL vào config nữa
-            "mode": self.download_mode_var.get(),
-            "folder": download_path,
-            "v_quality": self.download_video_quality_var.get().replace("p", ""),
-            "a_quality": self.download_audio_quality_var.get().replace("k", ""),
-            "rename_all": self.download_rename_var.get(),
-            "base_name": self.download_rename_box_var.get().strip(),
-            "do_sound": self.download_sound_var.get(),
-            "sound_file": sound_file_path,
-            "do_shutdown": self.download_shutdown_var.get(),
-            "stop_on_error": self.download_stop_on_error_var.get(),
-            "download_playlist": self.download_playlist_var.get(),
-            "auto_sub_after_download": False, # hoặc True
-            "use_cookies": self.download_use_cookies_var.get(),
-            "cookies_file": self.download_cookies_path_var.get()
-        }
-        logging.info(f"Config tải (CHỈ TẢI) đã chuẩn bị. Số link ban đầu trong hàng chờ: {len(urls_to_process_initial)} từ {source_of_urls}.")
-        
-        # --- Bước 4: Chuẩn bị giao diện và trạng thái ---
-        self.current_download_url = None 
-        self.update_download_queue_display() 
-
-        # Xóa log download sử dụng method của DownloadTab
-        if hasattr(self, 'download_view_frame') and hasattr(self.download_view_frame, 'clear_download_log'):
-            try:
-                self.download_view_frame.clear_download_log()
-            except Exception as e:
-                logging.error(f"Lỗi khi xóa log download: {e}")
-
-        self.stop_event.clear()
-        self.download_view_frame.set_download_ui_state(downloading=True)
-        self.download_view_frame.update_download_progress(0)
-
-        self.download_view_frame.log_download(f"🚀 Bắt đầu quá trình CHỈ TẢI (Nguồn: {source_of_urls})...")
-        self.download_view_frame.log_download(f"   - Số link hiện có trong hàng chờ: {len(self.download_urls_list)}")
-        self.download_view_frame.log_download(f"   - Chế độ: {config['mode']}")
-        self.download_view_frame.log_download(f"   - Lưu tại: {config['folder']}")
-
-        # --- Bước 5: Lưu cài đặt hiện tại và ghi nhận yêu cầu tắt máy ---
-        self.save_current_config() 
-        self.shutdown_requested_by_task = self.download_shutdown_var.get()
-        logging.info(f"Cấu hình UI đã lưu. Yêu cầu tắt máy bởi tác vụ: {self.shutdown_requested_by_task}")
-
-        self.start_time = time.time() 
-        self.update_time_realtime() 
-
-        # --- Bước 6: Start download thread ---
-        try:
-            if self.download_thread and self.download_thread.is_alive():
-                 logging.warning("Thread tải đang chạy!")
-                 messagebox.showwarning("Đang xử lý", "Quá trình tải khác đang chạy, vui lòng đợi.", parent=self)
-                 self.download_view_frame.set_download_ui_state(downloading=True) 
-                 return
-
-            logging.info(f"CHUẨN BỊ TẠO THREAD (start_download): self.download_urls_list lúc này = {self.download_urls_list}")
-            # Truyền config vào run_download
-            self.download_thread = threading.Thread(target=self.run_download, args=(config,), daemon=True, name="DownloadWorker")
-            self.download_thread.start()
-            logging.info("Đã bắt đầu thread tải.")
-        except Exception as e:
-            logging.error(f"Lỗi bắt đầu thread tải: {e}", exc_info=True)
-            messagebox.showerror("Lỗi", f"Không thể bắt đầu quá trình tải:\n{e}", parent=self)
-            self.download_view_frame.set_download_ui_state(downloading=False)
+        if hasattr(self, 'download_view_frame') and hasattr(self.download_view_frame, 'start_download'):
+            self.download_view_frame.start_download()
+        else:
+            logging.error("DownloadTab không có hàm start_download()")
+            messagebox.showerror("Lỗi", "Không tìm thấy DownloadTab.start_download()", parent=self)
 
 
 
 # Hàm hành động: Dừng quá trình tải xuống hiện tại
     def stop_download(self):
-        """ Gửi tín hiệu dừng đến thread tải và cố gắng dừng tiến trình con.
-            MODIFIED: Sẽ KHÔNG xóa URL đang tải bị dừng khỏi self.download_urls_list.
         """
-        logging.warning(">>> Yêu cầu Dừng Tải từ Nút của Người dùng <<<")
-
-        is_running = self.download_thread and self.download_thread.is_alive()
-
-        if is_running:
-            self.download_view_frame.log_download("\n🛑 Đang yêu cầu dừng quá trình tải...")
-            self.stop_event.set()
-
-            url_that_was_being_processed = self.current_download_url 
-
-            self.is_downloading = False
-            logging.info(f"[StopDownload] Đã đặt self.is_downloading = False.")
-
-            if self.shutdown_requested_by_task: # Từ lần sửa lỗi trước
-                logging.info(f"[StopDownload] Người dùng dừng tải, hủy yêu cầu tắt máy cho tác vụ này.")
-                self.shutdown_requested_by_task = False
-
-            # --- THAY ĐỔI Ở ĐÂY: KHÔNG XÓA URL KHỎI HÀNG CHỜ ---
-            if url_that_was_being_processed:
-                logging.info(f"[StopDownload] URL đang xử lý ('{url_that_was_being_processed[:60] if url_that_was_being_processed else 'None'}') sẽ được giữ lại trong hàng chờ theo yêu cầu.")
-            # Các dòng code xóa "url_that_was_being_processed" khỏi "self.download_urls_list"
-            # và "self.download_retry_counts" đã được BỎ ĐI hoặc COMMENT LẠI.
-            # Ví dụ, các dòng sau sẽ không còn nữa:
-            # # self.download_urls_list.remove(url_that_was_being_processed)
-            # # if url_that_was_being_processed in self.download_retry_counts:
-            # #     del self.download_retry_counts[url_that_was_being_processed]
-            # --- KẾT THÚC THAY ĐỔI ---
-
-            self.current_download_url = None # Vẫn quan trọng để reset UI slot "ĐANG TẢI"
-
-            proc = self.current_process
-            if proc and proc.poll() is None:
-                self.download_view_frame.log_download("   -> Đang cố gắng dừng tiến trình con (yt-dlp/ffmpeg)...")
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=1.5)
-                    self.download_view_frame.log_download("   -> Tiến trình con đã dừng (terminate/wait).")
-                except subprocess.TimeoutExpired:
-                    self.download_view_frame.log_download("   -> Tiến trình con không phản hồi, buộc dừng (kill)...")
-                    try:
-                        proc.kill()
-                        self.download_view_frame.log_download("   -> Đã buộc dừng (kill) tiến trình con.")
-                    except Exception as kill_err:
-                        self.download_view_frame.log_download(f"   -> Lỗi khi buộc dừng (kill): {kill_err}")
-                except Exception as e:
-                    self.download_view_frame.log_download(f"   -> Lỗi khi dừng tiến trình con: {e}")
-                    if proc.poll() is None:
-                        try:
-                            proc.kill()
-                            self.download_view_frame.log_download("   -> Đã buộc dừng (kill) sau lỗi.")
-                        except Exception as kill_err_B:
-                            self.download_view_frame.log_download(f"   -> Lỗi khi buộc dừng (kill) lần 2: {kill_err_B}")
-            else:
-                self.download_view_frame.log_download("   -> Không tìm thấy tiến trình con đang chạy để dừng trực tiếp.")
-            self.current_process = None
-
-            self.after(0, lambda: self.download_view_frame.set_download_ui_state(downloading=False))
-            self.after(10, self.update_download_queue_display) 
-            self.after(20, lambda: self.download_view_frame.update_download_progress(0))
+        Wrapper gọi đến DownloadTab.stop_download()
+        Hàm đã được di chuyển sang ui/tabs/download_tab.py (DownloadTab.stop_download)
+        """
+        if hasattr(self, 'download_view_frame') and hasattr(self.download_view_frame, 'stop_download'):
+            self.download_view_frame.stop_download()
         else:
-            self.download_view_frame.log_download("\nℹ️ Không có tiến trình tải nào đang chạy để dừng.")
-            self.download_view_frame.set_download_ui_state(downloading=False)
-            self.update_download_queue_display()
+            logging.error("DownloadTab không có hàm stop_download()")
 
 
 # Hàm tiện ích UI Download: Bật/tắt nút chọn file âm thanh dựa vào checkbox
@@ -18969,7 +18711,7 @@ class SubtitleApp(ctk.CTk):
         if hasattr(self, 'download_view_frame'):
             btn = getattr(self.download_view_frame, 'download_cookies_button', None)
             if btn and btn.winfo_exists():
-                new_state = "normal" if self.download_use_cookies_var.get() else "disabled"
+                new_state = "normal" if self.download_view_frame.download_use_cookies_var.get() else "disabled"
                 btn.configure(state=new_state)
             # Gọi hàm update label từ DownloadTab
             self.download_view_frame._update_cookies_label()
@@ -18977,779 +18719,10 @@ class SubtitleApp(ctk.CTk):
 
 #-------------------
 # === HÀM _execute_ytdlp PHIÊN BẢN HOÀN CHỈNH  ===
-    # Hàm chi tiết: Thực thi lệnh yt-dlp để tải file
-    def _execute_ytdlp(self, url, config, is_video, index, task_object_ref=None):
-        """ Thực thi yt-dlp, xử lý output, progress và tùy chọn --ppa. """
-        thread_name = threading.current_thread().name # Lấy tên luồng để log
-        logging.info(f"[{thread_name}] Bắt đầu tải: {'Video' if is_video else 'MP3'} - {url[:70]}...")
-
-        # Kiểm tra cờ dừng sớm
-        if self.stop_event.is_set():
-            logging.warning(f"[{thread_name}] Tác vụ bị dừng trước khi bắt đầu yt-dlp.")
-            return (False, None)
-
-        # Khởi tạo biến kết quả và trạng thái
-        process_result = False
-        output_filepath = None
-        output_lines = [] # Lưu các dòng output từ yt-dlp để debug lỗi
-        base_folder = Path(".") # Khởi tạo đường dẫn gốc
-        proc = None # Khởi tạo biến tiến trình là None
-
-        try:
-            # --- 1. Chuẩn bị Thư mục Output ---
-            base_folder_str = config.get("folder", ".") # Lấy đường dẫn từ config
-            if not base_folder_str: # Xử lý nếu đường dẫn trống
-                 logging.error(f"[{thread_name}] Đường dẫn thư mục tải về bị trống!")
-                 self.after(0, lambda: self.download_view_frame.log_download(f"   ❌ Lỗi: Đường dẫn lưu trống!"))
-                 return (False, None)
-            base_folder = Path(base_folder_str)
-            try:
-                base_folder.mkdir(parents=True, exist_ok=True) # Tạo thư mục nếu chưa có
-                logging.debug(f"[{thread_name}] Đã đảm bảo thư mục tồn tại: {base_folder}")
-            except OSError as e:
-                logging.error(f"[{thread_name}] Không thể tạo thư mục '{base_folder}': {e}")
-                self.after(0, lambda err=e, p=str(base_folder): self.download_view_frame.log_download(f"   ❌ Lỗi tạo thư mục '{p}': {err}"))
-                return (False, None) # Không thể tiếp tục nếu không có thư mục
-
-            # --- 2. Xây dựng Lệnh cmd cho yt-dlp ---
-            cmd = [YTDLP_PATH] # Bắt đầu với đường dẫn của yt-dlp
-
-            # Tùy chọn Playlist
-            if not config.get("download_playlist", False):
-                cmd.append("--no-playlist")
-
-            # Tìm và thêm đường dẫn ffmpeg
-            ffmpeg_location = find_ffmpeg()
-            if not ffmpeg_location:
-                logging.error(f"[{thread_name}] Không tìm thấy ffmpeg.")
-                self.after(0, lambda: self.download_view_frame.log_download(f"   ❌ Lỗi: Không tìm thấy ffmpeg!"))
-                self.after(0, lambda: self.update_status(f"❌ Lỗi tải: Thiếu ffmpeg."))
-                return (False, None)
-
-            # Thêm các tùy chọn yt-dlp chung
-            common_options = [
-                "--ffmpeg-location", ffmpeg_location,
-                "--no-warnings",                  # Ẩn các cảnh báo thông thường
-                "--restrict-filenames",           # Đảm bảo tên file an toàn cho HĐH
-                "--progress-template",            # Định dạng dòng progress (có thể tùy chỉnh)
-                    "download-title:%(info.title)s-ETA:%(progress.eta)s",
-                "--socket-timeout", "30",         # Timeout cho kết nối mạng (giây)
-                "--force-overwrite",              # Ghi đè nếu file đã tồn tại
-                # Có thể thêm các tùy chọn khác nếu muốn:
-                #"--geo-bypass",                 # Thử vượt qua giới hạn địa lý
-                #"--write-thumbnail",            # Tải cả ảnh thumbnail
-                #"--limit-rate", "5M",          # Giới hạn tốc độ tải (ví dụ 5MB/s)
-            ]
-            cmd.extend(common_options)
-
-            # Thêm --verbose nếu muốn debug (mặc định comment lại)
-            cmd.append("--verbose")
-
-            # --- Chuẩn bị mẫu tên file output (-o) ---
-            desired_ext = "mp4" if is_video else "mp3"
-            output_tmpl_pattern = ""
-            download_playlist = config.get("download_playlist", False)
-
-            if config.get("rename_all", False) and config.get('base_name'):
-                # ✅ NHÁNH ĐỔI TÊN HÀNG LOẠT (SỬA LỖI GHI ĐÈ)
-                safe_base_name = create_safe_filename(config['base_name'], remove_accents=False)
-                if download_playlist:
-                    # Playlist -> để yt-dlp tự tăng index cho MỖI MỤC
-                    index_token = "%(playlist_index)03d"
-                else:
-                    # Không phải playlist -> dùng index của bạn (hoặc %(autonumber)03d nếu 1 lệnh có nhiều URL)
-                    # index ở đây là tham số truyền vào hàm
-                    index_token = f"{index:03d}"  # hoặc: "%(autonumber)03d"
-
-                audio_suffix = "_audio" if not is_video else ""
-                # Giữ phần mở rộng cố định vì bạn đã ép mp3/mp4 bằng tham số
-                output_tmpl_pattern = f"{safe_base_name} - {index_token}{audio_suffix}.{desired_ext}"
-                logging.debug(f"[{thread_name}] Template rename_all: {output_tmpl_pattern}")
-
-            else:
-                # ✅ NHÁNH MẶC ĐỊNH (đã đúng, giữ nguyên tinh thần cũ)
-                index_part = "%(playlist_index)03d - " if download_playlist else ""
-                title_part = "%(title).15s"
-                audio_suffix = "_audio" if not is_video else ""
-                output_tmpl_pattern = f"{index_part}{title_part} - %(id)s{audio_suffix}.{desired_ext}"
-                output_tmpl_pattern = re.sub(r'\s*-\s*-\s*', ' - ', output_tmpl_pattern).strip(' -')
-                output_tmpl_pattern = re.sub(r'_-_', '_', output_tmpl_pattern)
-                logging.debug(f"[{thread_name}] Template mặc định: {output_tmpl_pattern}")
-
-            # Dọn chuỗi và fallback an toàn
-            output_tmpl_pattern = output_tmpl_pattern.replace("--.", ".").replace("__", "_").strip(" _-.")
-            if not output_tmpl_pattern or not output_tmpl_pattern.endswith(f".{desired_ext}"):
-                output_tmpl_pattern = f"downloaded_file_{index}.{desired_ext}"
-
-            output_tmpl = str(base_folder / output_tmpl_pattern)
-            cmd.extend(["-o", output_tmpl])
-
-            # Dọn dẹp và kiểm tra fallback
-            output_tmpl_pattern = output_tmpl_pattern.replace("--.", ".").replace("__", "_").strip(" _-.")
-            if not output_tmpl_pattern or not output_tmpl_pattern.endswith(f".{desired_ext}"):
-                 output_tmpl_pattern = f"downloaded_file_{index}.{desired_ext}" # Tên dự phòng an toàn
-            output_tmpl = str(base_folder / output_tmpl_pattern)
-
-            # <<< THÊM MỚI: Xử lý Cookies >>>
-            if config.get("use_cookies") and config.get("cookies_file"):
-                cookies_path = config["cookies_file"]
-                if os.path.exists(cookies_path):
-                    logging.info(f"[{thread_name}] Sử dụng file cookies: {cookies_path}")
-                    cmd.extend(["--cookies", cookies_path])
-                else:
-                    logging.warning(f"[{thread_name}] Đã bật dùng cookies nhưng file không tồn tại: {cookies_path}")
-            # <<< KẾT THÚC THÊM MỚI >>>
-
-            cmd.extend(["-o", output_tmpl]) # Thêm tùy chọn đường dẫn output
-
-            # --- Thêm tùy chọn định dạng và --ppa (NẾU LÀ VIDEO và ĐƯỢC CHỌN) ---
-            if is_video:
-                quality = config.get('v_quality', '1080') # Lấy chất lượng video từ config
-                # Format selection (ưu tiên mp4/m4a nếu có thể)
-                format_select = "bv*[height<=%s][ext=mp4]+ba[ext=m4a]/bv*[height<=%s]+ba/b[height<=%s]/b" % (quality, quality, quality)
-                if quality == 'best':
-                     format_select = "bv*+ba/b" # Lấy video + audio tốt nhất
-                cmd.extend(["-f", format_select, "--merge-output-format", "mp4"])
-
-                # Kiểm tra checkbox "Tối ưu Mobile"
-                optimize_mobile = False
-                if hasattr(self, 'optimize_for_mobile_var'):
-                    try: optimize_mobile = self.optimize_for_mobile_var.get()
-                    except Exception as e_get: logging.error(f"Lỗi khi lấy optimize_for_mobile_var: {e_get}")
-
-                if optimize_mobile:
-                    # Thêm tùy chọn PPA để ép ffmpeg re-encode tương thích iPhone
-                    logging.info(f"[{thread_name}] Đã chọn Tối ưu Mobile, thêm PPA cho ffmpeg...")
-                    #ppa_string = "ffmpeg:-c:v libx264 -preset medium -crf 23 -profile:v baseline -level 3.0 -pix_fmt yuv420p -c:a aac -b:a 128k"
-                    # Cân nhắc dùng profile 'main' nếu cần chất lượng cao hơn và chấp nhận rủi ro tương thích thấp hơn baseline một chút:
-                    ppa_string = "ffmpeg:-c:v libx264 -preset medium -crf 22 -profile:v main -pix_fmt yuv420p -c:a aac -b:a 192k"
-                    cmd.append("--ppa")
-                    cmd.append(ppa_string)
-                else:
-                    # Không tối ưu, chỉ merge (yt-dlp tự xử lý, thường là copy stream)
-                    logging.info(f"[{thread_name}] Không chọn Tối ưu Mobile, giữ chất lượng gốc (chỉ merge).")
-                    # Không cần thêm cờ gì cả ở đây
-
-            else: # Nếu là tải Audio
-                quality = config.get('a_quality', 'best') # Lấy chất lượng audio
-                audio_q_ffmpeg = f"{quality}k" if quality != 'best' and quality.isdigit() else "0" # 0 là tốt nhất cho ffmpeg
-                cmd.extend([
-                    "-f", "ba/b",  # Chọn luồng audio tốt nhất
-                    "-x",          # Trích xuất audio
-                    "--audio-format", "mp3", # Định dạng output là mp3
-                    "--audio-quality", audio_q_ffmpeg # Chất lượng audio (0=best)
-                ])
-
-            # Thêm URL vào cuối cùng
-            cmd.append(url)
-            logging.debug(f"[{thread_name}] Lệnh yt-dlp hoàn chỉnh sẽ chạy: {' '.join(cmd)}")
-
-            # Reset progress bar trước khi bắt đầu
-            self.after(0, lambda: self.download_view_frame.update_download_progress(0))
-
-            # --- 3. Thực thi tiến trình yt-dlp (streaming output) ---
-            proc = None
-            def _set_proc(p):
-                nonlocal proc
-                proc = p
-                try:
-                    setattr(self, 'current_process', p)
-                except Exception:
-                    pass
-
-            def _clear_proc():
-                nonlocal proc
-                proc = None
-                try:
-                    setattr(self, 'current_process', None)
-                except Exception:
-                    pass
-
-            # --- 4. Vòng lặp đọc Output từ yt-dlp ---
-            progress_regex = re.compile(r"\[download\]\s+(\d{1,3}(?:[.,]\d+)?)%")
-            destination_regex = re.compile( r"\[(?:download|Merger|ExtractAudio|ffmpeg)\]\s+(?:Destination:|Merging formats into|Extracting audio to|Deleting original file|Converting video to)\s*(.*)" )
-            last_percent = -1.0; is_processing_step = False; potential_output_path = None
-
-            # Đọc từng dòng output cho đến khi tiến trình kết thúc
-            for line in ytdlp_stream_output(
-                cmd,
-                process_name=f"{thread_name}_yt-dlp",
-                hide_console_window=True,
-                set_current_process=_set_proc,
-                clear_current_process=_clear_proc,
-            ):
-                 if self.stop_event.is_set(): # Xử lý dừng bởi người dùng
-                      logging.warning(f"[{thread_name}] Cờ dừng được kích hoạt.")
-                      try:
-                          if proc and proc.poll() is None: proc.terminate(); logging.info(f"[{thread_name}] Đã gửi terminate.")
-                      except Exception as term_err: logging.warning(f"Lỗi terminate: {term_err}")
-                      break # Thoát vòng lặp đọc
-
-                 clean_line = line.strip()
-                 if not clean_line: continue # Bỏ qua dòng trống
-                 output_lines.append(clean_line) # Lưu lại dòng log để debug nếu cần
-                 # Gửi lên UI Log (có thể làm chậm nếu quá nhiều log verbose)
-                 self.after(0, lambda line=clean_line: self.download_view_frame.log_download(f"      {line}"))
-
-                 # Phân tích dòng log để tìm đường dẫn file cuối hoặc trạng thái
-                 dest_match = destination_regex.search(clean_line)
-                 if dest_match:
-                    found_path_raw = dest_match.group(1).strip().strip('"')
-                    # Kiểm tra nếu là đường dẫn file hợp lệ và không phải file tạm
-                    if not any(found_path_raw.endswith(ext) for ext in [".part", ".ytdl", ".temp"]) and os.path.splitext(found_path_raw)[1]:
-                         potential_output_path = found_path_raw
-                         logging.debug(f"Cập nhật path cuối tiềm năng: {potential_output_path}")
-                    elif not potential_output_path and any(found_path_raw.endswith(ext) for ext in [".part", ".ytdl", ".temp"]):
-                         logging.debug(f"Tìm thấy path tạm: {found_path_raw}")
-
-                 # Phát hiện giai đoạn xử lý sau tải (ffmpeg, merge,...)
-                 if not is_processing_step and any(tag in clean_line for tag in ["[ExtractAudio]", "[Merger]", "[ffmpeg]"]):
-                      is_processing_step = True
-                      self.after(0, lambda: self.download_view_frame.update_download_progress(100)) # Xem như download 100%
-                      self.after(0, lambda: self.update_status("⏳ Đang xử lý (ghép/chuyển đổi)..."))
-                      logging.debug(f"[{thread_name}] Bắt đầu giai đoạn xử lý sau tải...")
-                      continue # Không cần parse % nữa
-
-                 # Cập nhật thanh progress bar nếu đang trong giai đoạn download
-                 if not is_processing_step:
-                     match = progress_regex.search(clean_line)
-                     if match:
-                         percent_str = match.group(1).replace(',', '.')
-                         try: # Khối try/except định dạng đúng
-                             percent = float(percent_str)
-                             if abs(percent - last_percent) >= 0.5 or percent >= 99.9:
-                                 last_percent = percent
-                                 self.after(0, lambda p=percent: self.download_view_frame.update_download_progress(p))
-                         except ValueError:
-                             pass # Bỏ qua nếu lỗi parse số
-
-            # --- Kết thúc vòng lặp đọc Output ---
-            logging.info(f"[{thread_name}] Hoàn tất đọc stdout. Chờ tiến trình yt-dlp thoát...")
-
-            # --- 5. Lấy mã trả về ---
-            return_code = -97 if proc is None else (proc.returncode if proc.poll() is not None else proc.wait(timeout=1))
-
-            self.current_process = None # Xóa tham chiếu sau khi xử lý xong
-
-            # --- 6. Xử lý kết quả cuối cùng (PHIÊN BẢN HOÀN CHỈNH) ---
-            if self.stop_event.is_set() or return_code == -100:
-                self.after(0, lambda: self.download_view_frame.log_download(f"   ⚠️ Bị dừng."))
-                process_result = False
-            
-            # Ưu tiên kiểm tra sự tồn tại của file output làm điều kiện thành công chính
-            
-            final_output_path_check = None
-            # Cố gắng xác định đường dẫn file cuối cùng bất kể return_code là gì
-            if potential_output_path and os.path.exists(potential_output_path) and os.path.getsize(potential_output_path) > 1024:
-                final_output_path_check = potential_output_path
-            elif os.path.exists(output_tmpl) and os.path.getsize(output_tmpl) > 1024:
-                final_output_path_check = output_tmpl
-            
-            # Nếu tìm thấy file output hợp lệ
-            if final_output_path_check:
-                if return_code == 0:
-                    logging.info(f"[{thread_name}] THÀNH CÔNG: yt-dlp thoát với mã 0 và file output hợp lệ: {final_output_path_check}")
-                    self.after(0, lambda: self.download_view_frame.log_download(f"   ✔️ Hoàn thành (Mã 0)."))
-                else:
-                    logging.warning(f"[{thread_name}] THÀNH CÔNG (FALLBACK): yt-dlp thoát với mã lỗi {return_code} nhưng đã tạo file thành công: {final_output_path_check}")
-                    self.after(0, lambda: self.download_view_frame.log_download(f"   ✔️ Hoàn thành (với fallback của yt-dlp)."))
-                
-                self.after(10, lambda: self.download_view_frame.update_download_progress(100))
-                process_result = True
-                output_filepath = final_output_path_check
-            
-            # Nếu KHÔNG tìm thấy file output nào hợp lệ
-            else:
-                process_result = False
-                full_output_log = "\n".join(output_lines)
-                logging.error(f"[{thread_name}] THẤT BẠI: Không tìm thấy file output hợp lệ. Mã lỗi yt-dlp: {return_code}. URL: {url}. Log:\n{full_output_log[-2000:]}") # Log 2000 dòng cuối
-
-                # Phân tích lỗi cụ thể để thông báo cho người dùng
-                specific_error_msg = None
-                full_output_lower = full_output_log.lower()
-                if "login required" in full_output_lower or "private video" in full_output_lower or "cookies" in full_output_lower: specific_error_msg = "Yêu cầu đăng nhập hoặc video riêng tư."
-                elif "video unavailable" in full_output_lower: specific_error_msg = "Video không tồn tại hoặc đã bị xóa."
-                elif "copyright" in full_output_lower: specific_error_msg = "Video bị chặn do vấn đề bản quyền."
-                elif "geo-restricted" in full_output_lower or "geo restricted" in full_output_lower: specific_error_msg = "Video bị giới hạn địa lý."
-                elif "unsupported url" in full_output_lower: specific_error_msg = "URL không được hỗ trợ."
-                elif "fragment" in full_output_lower and "ffmpeg" in full_output_lower: specific_error_msg = "Lỗi ghép file (có thể thiếu ffmpeg?)."
-                
-                # Tạo thông báo lỗi cho UI
-                error_log_msg_ui = f"   ❌ Lỗi tải {'Video' if is_video else 'MP3'} (mã {return_code})"
-                if specific_error_msg:
-                    error_log_msg_ui += f": {specific_error_msg}"
-                self.after(0, lambda msg=error_log_msg_ui: self.download_view_frame.log_download(msg))
-
-        except FileNotFoundError:
-             logging.error(f"Lỗi FileNotFoundError: Không tìm thấy file thực thi '{YTDLP_PATH}'.")
-             self.after(0, lambda: self.download_view_frame.log_download(f"   ❌ Lỗi: Không tìm thấy '{YTDLP_PATH}'.")); process_result = False
-             self.after(0, lambda: self.update_status(f"❌ Lỗi tải: Không tìm thấy '{YTDLP_PATH}'."))
-        except Exception as e:
-             import traceback; error_details = traceback.format_exc()
-             logging.error(f"[{thread_name}] Lỗi không mong đợi trong _execute_ytdlp: {e}\n{error_details}")
-             self.after(0, lambda err=e: self.download_view_frame.log_download(f"   ❌ Lỗi không xác định: {err}")); process_result = False
-        finally:
-            # --- Khối Finally (Đảm bảo dọn dẹp và kết thúc) ---
-            # Dọn dẹp file tạm nếu tải thất bại và không phải do người dùng dừng
-            if not process_result and not self.stop_event.is_set():
-                logging.info(f"[{thread_name}] Tải thất bại. Đang thử dọn dẹp file tạm...")
-                try:
-                    if base_folder.is_dir():
-                        for item in base_folder.iterdir():
-                            if item.is_file() and (item.suffix.lower() in ['.part', '.ytdl'] or item.name.endswith('.temp')):
-                                logging.info(f"Đang xóa file tạm: {item.name}")
-                                try: item.unlink()
-                                except OSError as del_err: logging.warning(f"Không thể xóa {item.name}: {del_err}")
-                except Exception as cleanup_err: logging.error(f"Lỗi dọn dẹp file tạm: {cleanup_err}")
-
-            # Đảm bảo tiến trình con đã thực sự kết thúc
-            if proc and proc.poll() is None: # Kiểm tra lại lần nữa trước khi kill
-                logging.warning(f"[{thread_name}] Tiến trình yt-dlp vẫn chạy trong finally? Đang kill.")
-                try:
-                    proc.kill(); proc.wait(timeout=2) # Kill và chờ chút
-                    logging.info(f"[{thread_name}] Đã kill tiến trình trong finally.")
-                except Exception as final_kill_err: logging.error(f"Lỗi khi kill tiến trình trong finally: {final_kill_err}")
-
-            # Nếu tải thành công, cập nhật đối tượng tác vụ
-            if process_result and task_object_ref is not None:
-                if is_video:
-                    task_object_ref['downloaded_video_path'] = output_filepath
-                    logging.info(f"Đã cập nhật 'downloaded_video_path' trong Task Object: {os.path.basename(output_filepath if output_filepath else 'None')}")
-                else: # is_audio
-                    task_object_ref['downloaded_audio_path'] = output_filepath
-                    logging.info(f"Đã cập nhật 'downloaded_audio_path' trong Task Object: {os.path.basename(output_filepath if output_filepath else 'None')}")
-
-            logging.info(f"[{thread_name}] Hoàn tất _execute_ytdlp. Thành công: {process_result}, Đường dẫn: {output_filepath}")
-            # Trả về kết quả (True/False, đường dẫn file hoặc None)
-            return (process_result, output_filepath)
-
+    # Hàm đã được di chuyển sang ui/tabs/download_tab.py (DownloadTab._execute_ytdlp)
 
 # Hàm logic chính: Thực hiện tải xuống các URL trong một luồng riêng
-    def run_download(self, config_from_start):
-        """
-        Thực hiện quá trình tải xuống các URL.
-        Luôn lấy URL tiếp theo từ đầu self.download_urls_list.
-        Xử lý thử lại link lỗi và kiểm tra Sheet tự động khi hàng chờ trống.
-        Sử dụng self.globally_completed_urls để không tải lại link đã thành công.
-        """
-
-        with keep_awake("Download media"):
-
-            thread_name = threading.current_thread().name
-            logging.info(f"[{thread_name}] RUN_DOWNLOAD: Bắt đầu (phiên bản động, retry, sheet, global_completed).")
-
-            # Các biến theo dõi cho lượt chạy này của run_download
-            successfully_downloaded_video_files_this_run = []
-            error_links_encountered_this_run = [] 
-            success_count_this_run = 0
-            processed_count_this_run = 0
-            successfully_created_task_objects_this_run = []
-            
-            # Cài đặt cho việc kiểm tra Sheet tự động
-            last_sheet_check_time = 0 
-            sheet_check_interval = config_from_start.get("sheet_check_interval_seconds", 60) # Lấy từ config hoặc mặc định 60s
-
-            MAX_RETRIES_PER_LINK = config_from_start.get("max_retries_per_link", 2) # Lấy từ config hoặc mặc định 2
-
-            attempted_final_sheet_check = False # Giữ nguyên cờ này
-
-            while not self.stop_event.is_set():
-                current_url_to_process = None
-
-                # --- A. XỬ LÝ KHI HÀNG CHỜ TRỐNG HOẶC CHỈ CÓ LINK ĐÃ MAX_RETRIES (BAO GỒM KIỂM TRA SHEET) ---
-                # Kiểm tra xem có cần fetch sheet không
-                should_fetch_sheet = False
-                if not self.download_urls_list: # Hàng chờ trống hoàn toàn
-                    should_fetch_sheet = True
-                    logging.info(f"[{thread_name}] RUN_DOWNLOAD: Hàng chờ trống, sẽ xem xét kiểm tra Sheet.")
-                else: # Hàng chờ không trống, kiểm tra xem tất cả có phải đã max_retry không
-                    all_remaining_are_max_retries = True
-                    for url_in_q_check in self.download_urls_list:
-                        if self.download_retry_counts.get(url_in_q_check, 0) < MAX_RETRIES_PER_LINK:
-                            all_remaining_are_max_retries = False
-                            break
-                    if all_remaining_are_max_retries:
-                        should_fetch_sheet = True
-                        logging.info(f"[{thread_name}] RUN_DOWNLOAD: Hàng chờ chỉ còn các link đã max_retry, sẽ xem xét kiểm tra Sheet.")
-                
-                if should_fetch_sheet:
-                    if self.disable_auto_sheet_check_var.get():
-                        if not self.download_urls_list: # Chỉ thoát nếu hàng chờ thực sự rỗng và không được kiểm tra sheet
-                            logging.info(f"[{thread_name}] RUN_DOWNLOAD: Hàng chờ trống (hoặc chỉ còn link max_retry) và người dùng đã tắt kiểm tra Sheet. Kết thúc tải.")
-                            break 
-                    else: 
-                        current_time = time.time()
-                        if (current_time - last_sheet_check_time > sheet_check_interval) or not attempted_final_sheet_check:
-                            if not attempted_final_sheet_check:
-                                logging.info(f"[{thread_name}] RUN_DOWNLOAD: Hàng chờ trống/chỉ còn link max_retry, thực hiện kiểm tra Sheet lần cuối/đầu khi rỗng hợp lệ.")
-                            else:
-                                logging.info(f"[{thread_name}] RUN_DOWNLOAD: Hàng chờ trống/chỉ còn link max_retry, đến giờ kiểm tra Google Sheet định kỳ...")
-                            
-                            attempted_final_sheet_check = True 
-
-                            sheet_fetch_done_event = threading.Event()
-                            local_links_from_sheet = None
-                            local_fetch_success = False
-                            local_error_msg = None
-
-                            def after_sheet_fetch_callback(success, links_returned, error_msg):
-                                nonlocal local_links_from_sheet, local_fetch_success, local_error_msg
-                                local_fetch_success = success
-                                if success and links_returned: local_links_from_sheet = links_returned
-                                elif not success and error_msg: local_error_msg = error_msg
-                                sheet_fetch_done_event.set()
-                            
-                            self.fetch_links_from_sheet(callback=after_sheet_fetch_callback, auto_triggered=True)
-                            
-                            logging.debug(f"[{thread_name}] RUN_DOWNLOAD: Đang chờ kết quả từ Google Sheet (timeout 30s)...")
-                            sheet_fetch_done_event.wait(timeout=30)
-                            last_sheet_check_time = time.time() 
-
-                            if not sheet_fetch_done_event.is_set():
-                                logging.warning(f"[{thread_name}] RUN_DOWNLOAD: Quá thời gian chờ lấy link từ Sheet hoặc callback có vấn đề.")
-                            elif local_fetch_success and local_links_from_sheet is not None:
-                                newly_added_to_main_list_count = 0
-                                for link_fs in local_links_from_sheet:
-                                    if link_fs not in self.download_urls_list and \
-                                       link_fs not in self.globally_completed_urls: 
-                                        self.download_urls_list.append(link_fs)
-                                        self.download_retry_counts.pop(link_fs, None) 
-                                        newly_added_to_main_list_count +=1
-                                    elif link_fs in self.globally_completed_urls:
-                                         logging.debug(f"[{thread_name}] RUN_DOWNLOAD: Bỏ qua link từ Sheet (đã hoàn thành trước đó): {link_fs[:60]}...")
-                                    elif link_fs in self.download_urls_list:
-                                         logging.debug(f"[{thread_name}] RUN_DOWNLOAD: Bỏ qua link từ Sheet (đã có trong hàng chờ): {link_fs[:60]}...")
-                                if newly_added_to_main_list_count > 0:
-                                    logging.info(f"[{thread_name}] RUN_DOWNLOAD: Đã thêm {newly_added_to_main_list_count} link MỚI từ Sheet.")
-                                    self.after(0, self.update_download_queue_display)
-                                    attempted_final_sheet_check = False
-                                else:
-                                    logging.info(f"[{thread_name}] RUN_DOWNLOAD: Sheet được kiểm tra, không có link thực sự mới.")
-                            elif not local_fetch_success:
-                                 logging.error(f"[{thread_name}] RUN_DOWNLOAD: Lỗi khi tự động lấy link từ Sheet: {local_error_msg}")
-                            else: 
-                                 logging.info(f"[{thread_name}] RUN_DOWNLOAD: Không có link nào được trả về từ Sheet.")
-
-                        else: 
-                            if not self.download_urls_list:
-                                logging.debug(f"[{thread_name}] RUN_DOWNLOAD: Hàng chờ rỗng hoàn toàn, chưa đến giờ kiểm tra Sheet định kỳ, tạm dừng 5s.")
-                                time.sleep(5) 
-                                continue 
-                
-                # Điều kiện thoát nếu self.download_urls_list rỗng hoàn toàn sau mọi nỗ lực
-                if not self.download_urls_list: 
-                     logging.info(f"[{thread_name}] RUN_DOWNLOAD: Hàng chờ rỗng hoàn toàn. Kết thúc tải.")
-                     break
-
-                # --- B. CHỌN URL TIẾP THEO TỪ self.download_urls_list ĐỂ XỬ LÝ (ƯU TIÊN LINK MỚI) ---
-                current_url_to_process = None
-                url_chosen_for_processing_index = -1
-
-                # Ưu tiên 1: Tìm link mới hoàn toàn (retry_count == 0 hoặc chưa có trong retry_counts)
-                for i, url_in_q in enumerate(self.download_urls_list):
-                    if self.download_retry_counts.get(url_in_q, 0) == 0: # Ưu tiên link chưa thử hoặc retry count là 0
-                        url_chosen_for_processing_index = i
-                        logging.info(f"[{thread_name}] RUN_DOWNLOAD: Ưu tiên link mới/chưa thử: '{url_in_q[:50]}...' ở vị trí {i}.")
-                        break 
-                
-                # Ưu tiên 2: Nếu không có link mới, tìm link đã thử nhưng chưa max retries
-                if url_chosen_for_processing_index == -1: # Không tìm thấy link mới hoàn toàn
-                    for i, url_in_q in enumerate(self.download_urls_list):
-                        if self.download_retry_counts.get(url_in_q, 0) < MAX_RETRIES_PER_LINK:
-                            url_chosen_for_processing_index = i
-                            logging.info(f"[{thread_name}] RUN_DOWNLOAD: Chọn link đã thử nhưng chưa max retries: '{url_in_q[:50]}...' ở vị trí {i}.")
-                            break
-                
-                if url_chosen_for_processing_index != -1:
-                    if url_chosen_for_processing_index > 0:
-                        current_url_to_process = self.download_urls_list.pop(url_chosen_for_processing_index)
-                        self.download_urls_list.insert(0, current_url_to_process)
-                        logging.info(f"[{thread_name}] RUN_DOWNLOAD: Đã di chuyển link '{current_url_to_process[:50]}...' lên đầu hàng chờ.")
-                    else: # url_chosen_for_processing_index == 0 (link hợp lệ đã ở đầu)
-                        current_url_to_process = self.download_urls_list[0]
-                else:
-
-                    logging.info(f"[{thread_name}] RUN_DOWNLOAD: Không còn link hợp lệ để thử (tất cả đã lỗi quá {MAX_RETRIES_PER_LINK} lần hoặc hàng chờ trống sau khi lọc). Kết thúc tải.")
-                    break 
-
-                if not current_url_to_process:
-                     logging.error(f"[{thread_name}] RUN_DOWNLOAD: Lỗi logic - Không xác định được current_url_to_process dù đã chọn index. Thoát.")
-                     break
-
-                # TẠO ĐỐI TƯỢNG TÁC VỤ CHO URL HIỆN TẠI
-                task_object = {
-                    'source': current_url_to_process,
-                    'identifier': get_identifier_from_source(current_url_to_process),
-                    'downloaded_video_path': None,  # Sẽ được cập nhật sau khi tải video
-                    'downloaded_audio_path': None,  # Sẽ được cập nhật sau khi tải audio
-                }
-                logging.info(f"[{thread_name}] RUN_DOWNLOAD: Đã tạo Task Object với Identifier: '{task_object['identifier']}'")
-                
-                # --- C. XỬ LÝ URL ĐÃ CHỌN ---
-                self.current_download_url = current_url_to_process
-                processed_count_this_run += 1
-                current_retry_for_url = self.download_retry_counts.get(current_url_to_process, 0)
-
-                self.after(0, self.update_download_queue_display) # Cập nhật UI ngay khi chọn link
-                self.after(0, lambda url=current_url_to_process, p=processed_count_this_run, retries=current_retry_for_url, total_q=len(self.download_urls_list): \
-                    self.update_status(f"⏳ Đang tải link {p} (Thử {retries+1}, còn {total_q-1} chờ): {url[:45]}..."))
-                self.after(0, lambda: self.download_view_frame.update_download_progress(0))
-                self.after(0, lambda url_log=current_url_to_process, retries=current_retry_for_url: \
-                    self.download_view_frame.log_download(f"\n🔗--- Đang xử lý link (Thử lần {retries+1}): {url_log} ---"))
-
-                loop_start_time = time.time()
-                link_overall_success = True
-                video_filepath_result = None
-                at_least_one_download_attempted = False
-
-                # --- C.1. Tải Video ---
-                if config_from_start.get("mode", "video") in ["video", "both"]:
-                    at_least_one_download_attempted = True
-                    if self.stop_event.is_set(): link_overall_success = False
-                    else:
-                        self.after(0, lambda: self.download_view_frame.log_download("   🎬 Đang tải Video..."))
-                        video_success, video_filepath_returned = self._execute_ytdlp(current_url_to_process, config_from_start, is_video=True, index=processed_count_this_run, task_object_ref=task_object)
-                        if not video_success: link_overall_success = False
-                        elif video_filepath_returned: video_filepath_result = video_filepath_returned
-                
-                # --- C.2. Tải MP3 ---
-                should_download_mp3 = (config_from_start.get("mode", "video") in ["mp3", "both"])
-                if should_download_mp3 and not self.stop_event.is_set() and \
-                   (config_from_start.get("mode", "video") == "mp3" or link_overall_success): # Chỉ tải MP3 nếu mode là mp3 hoặc video (nếu có) đã thành công
-                    at_least_one_download_attempted = True
-                    if config_from_start.get("mode", "video") == "both": self.after(0, lambda: self.download_view_frame.update_download_progress(0))
-                    self.after(0, lambda: self.download_view_frame.log_download("   🎵 Đang tải MP3..."))
-                    mp3_success, _ = self._execute_ytdlp(current_url_to_process, config_from_start, is_video=False, index=processed_count_this_run, task_object_ref=task_object)
-                    if not mp3_success: link_overall_success = False
-                elif should_download_mp3 and not link_overall_success and config_from_start.get("mode", "video") == "both":
-                     logging.info(f"[{thread_name}] RUN_DOWNLOAD: Chế độ 'both', video lỗi nên bỏ qua tải MP3 cho: {current_url_to_process}")
-                     self.after(0, lambda url_log=current_url_to_process: self.download_view_frame.log_download(f"   ⚠️ Video lỗi, bỏ qua MP3 cho: {url_log[:80]}..."))
-
-                if not at_least_one_download_attempted and not self.stop_event.is_set():
-                    link_overall_success = False # Coi như lỗi nếu không có gì được thử tải
-                    logging.warning(f"[{thread_name}] RUN_DOWNLOAD: Không có tác vụ tải nào cho URL: {current_url_to_process} với chế độ {config_from_start.get('mode', 'video')}")
-                    self.after(0, lambda url_log=current_url_to_process: self.download_view_frame.log_download(f"   ⚠️ Không tải gì cho: {url_log[:80]}... (Chế độ: {config_from_start.get('mode', 'video')})"))
-                    if current_url_to_process not in error_links_encountered_this_run: 
-                        error_links_encountered_this_run.append(current_url_to_process)
-
-                # --- C.3. Xử lý kết quả của link này ---
-                if not self.stop_event.is_set(): 
-                    loop_end_time = time.time()
-                    duration = loop_end_time - loop_start_time
-                    
-                    if link_overall_success:
-                        success_count_this_run += 1
-                        self.after(0, lambda url_log=current_url_to_process, t=duration: self.download_view_frame.log_download(f"   ✅ Hoàn thành Link: {url_log[:80]}... (Thời gian: {t:.2f}s)"))
-                        if video_filepath_result and os.path.exists(video_filepath_result):
-                            if video_filepath_result not in successfully_downloaded_video_files_this_run:
-                                successfully_downloaded_video_files_this_run.append(video_filepath_result)
-
-                        successfully_created_task_objects_this_run.append(task_object)
-                        self.globally_completed_urls.add(current_url_to_process) # Đánh dấu đã hoàn thành toàn cục
-                        logging.info(f"[{thread_name}] RUN_DOWNLOAD: Đã thêm '{current_url_to_process[:50]}...' vào globally_completed_urls.")
-                        
-                        try: # Xóa khỏi hàng chờ và retry_counts
-                            if self.download_urls_list and self.download_urls_list[0] == current_url_to_process:
-                                self.download_urls_list.pop(0)
-                                self.download_retry_counts.pop(current_url_to_process, None)
-                                logging.info(f"[{thread_name}] RUN_DOWNLOAD: Đã xóa URL thành công '{current_url_to_process[:50]}...' và reset retry.")
-                            elif current_url_to_process in self.download_urls_list: 
-                                self.download_urls_list.remove(current_url_to_process)
-                                self.download_retry_counts.pop(current_url_to_process, None)
-                                logging.warning(f"[{thread_name}] RUN_DOWNLOAD: URL thành công '{current_url_to_process[:50]}...' được xóa (và reset retry) nhưng không từ vị trí đầu.")
-                            else: 
-                                logging.warning(f"[{thread_name}] RUN_DOWNLOAD: URL thành công '{current_url_to_process[:50]}...' không tìm thấy để xóa/reset retry.")
-                        except Exception as e_remove:
-                            logging.error(f"[{thread_name}] RUN_DOWNLOAD: Lỗi khi xóa URL thành công '{current_url_to_process[:50]}...': {e_remove}")
-                    
-                    else: # link_overall_success is False (và không phải do stop_event)
-                        self.after(0, lambda url_log=current_url_to_process, t=duration: self.download_view_frame.log_download(f"   ⚠️ Hoàn thành Link với lỗi: {url_log[:80]}... (Thời gian: {t:.2f}s)"))
-                        if current_url_to_process not in error_links_encountered_this_run: 
-                             error_links_encountered_this_run.append(current_url_to_process)
-
-                        current_retry_for_url_after_attempt = self.download_retry_counts.get(current_url_to_process, 0) + 1
-                        self.download_retry_counts[current_url_to_process] = current_retry_for_url_after_attempt
-                        logging.info(f"[{thread_name}] RUN_DOWNLOAD: URL '{current_url_to_process[:50]}...' lỗi lần {current_retry_for_url_after_attempt}.")
-
-                        if current_retry_for_url_after_attempt >= MAX_RETRIES_PER_LINK:
-                            logging.warning(f"[{thread_name}] RUN_DOWNLOAD: URL '{current_url_to_process[:50]}...' đã lỗi {current_retry_for_url_after_attempt} lần. Sẽ không thử lại và giữ nguyên vị trí (sẽ bị bỏ qua ở vòng lặp sau).")
-                            self.after(0, lambda url_log=current_url_to_process: self.download_view_frame.log_download(f"   🚫 Link {url_log[:50]}... đã lỗi quá nhiều lần, sẽ không thử lại."))
-
-                        else:
-                            if self.download_urls_list and self.download_urls_list[0] == current_url_to_process:
-                                if len(self.download_urls_list) > 1: 
-                                    try:
-                                        failed_url = self.download_urls_list.pop(0)
-                                        self.download_urls_list.append(failed_url)
-                                        logging.info(f"[{thread_name}] RUN_DOWNLOAD: Đã chuyển URL lỗi (thử lần {current_retry_for_url_after_attempt}) '{failed_url[:50]}...' xuống cuối.")
-                                    except Exception as e_move_failed:
-                                        logging.error(f"[{thread_name}] RUN_DOWNLOAD: Lỗi khi chuyển URL lỗi '{current_url_to_process[:50]}...': {e_move_failed}")
-                                else: 
-                                    logging.warning(f"[{thread_name}] RUN_DOWNLOAD: URL lỗi '{current_url_to_process[:50]}...' là mục duy nhất (thử {current_retry_for_url_after_attempt}), không di chuyển.")
-                        
-                        if config_from_start.get("stop_on_error", False):
-                            self.after(0, lambda: self.download_view_frame.log_download("\n✋ Đã bật 'Dừng khi lỗi'. Dừng xử lý!"))
-                            self.stop_event.set() 
-                
-                if self.stop_event.is_set():
-                    logging.info(f"[{thread_name}] RUN_DOWNLOAD: Phát hiện cờ dừng sau khi xử lý một link, thoát vòng lặp tải.")
-                    break 
-            
-            # ===== KẾT THÚC VÒNG LẶP while not self.stop_event.is_set() =====
-            logging.info(f"[{thread_name}] RUN_DOWNLOAD: Đã thoát vòng lặp tải chính.")
-
-            # --- Khối finally: Dọn dẹp và Hoàn tất ---
-            try:
-                logging.info(f"[{thread_name}] RUN_DOWNLOAD: Vào khối finally.")
-                self.current_download_url = None
-                self.is_downloading = False 
-                logging.info(f"[{thread_name}] RUN_DOWNLOAD: Đã đặt self.is_downloading = False")
-                self.after(10, self.update_download_queue_display)
-
-                final_message = ""
-                should_auto_sub = False
-                files_for_sub = [] 
-
-                current_remaining_links_in_master_queue = getattr(self, 'download_urls_list', [])
-                
-                unique_links_attempted_count = success_count_this_run + len(set(error_links_encountered_this_run))
-
-                if self.stop_event.is_set():
-                    final_message = "\n🛑 Quá trình tải đã bị dừng (bởi người dùng hoặc lỗi)."
-                    if current_remaining_links_in_master_queue : 
-                         final_message += f"\n   (Còn {len(current_remaining_links_in_master_queue)} link trong hàng chờ chưa xử lý hoàn toàn.)"
-                    should_auto_sub = False
-                else: 
-                    final_message = f"\n🏁 === TỔNG KẾT TẢI ===\n"
-
-                    # --- THÊM THÔNG BÁO VỀ KIỂM TRA SHEET ---
-                    if self.disable_auto_sheet_check_var.get():
-                        final_message += "   (Tự động kiểm tra Google Sheet: Đã tắt bởi người dùng)\n"
-                    else:
-                        # Có thể thêm thông tin về lần kiểm tra sheet cuối cùng nếu muốn, ví dụ:
-                        # if last_sheet_check_time > 0: # Biến last_sheet_check_time cần được giữ lại sau vòng lặp
-                        #    final_message += f"   (Tự động kiểm tra Google Sheet: Đã bật, lần cuối lúc {datetime.fromtimestamp(last_sheet_check_time).strftime('%H:%M:%S')})\n"
-                        # else:
-                        final_message += "   (Tự động kiểm tra Google Sheet: Đã bật)\n"
-                    # -----------------------------------------
-
-                    final_message += f"   - Tổng số lượt xử lý link trong lượt này: {processed_count_this_run}\n"
-
-                    final_message += f"   - Số link tải thành công trong lượt này: {success_count_this_run}\n"
-                    
-                    # Thông tin về các link lỗi GẶP PHẢI trong lượt này
-                    if error_links_encountered_this_run:
-                        final_message += f"   - Số link gặp lỗi trong lượt này: {len(error_links_encountered_this_run)}\n"
-                        for err_link in error_links_encountered_this_run[:3]: # Hiển thị tối đa 3 link lỗi cụ thể
-                             retry_c_err = self.download_retry_counts.get(err_link, 0)
-                             final_message += f"      - {err_link[:80]}... (Đã thử {retry_c_err} lần, tối đa {MAX_RETRIES_PER_LINK})\n"
-                        if len(error_links_encountered_this_run) > 3:
-                            final_message += f"      ... và {len(error_links_encountered_this_run) - 3} link lỗi khác.\n"
-
-                    # Thông tin về các link CÒN LẠI trong hàng chờ (có thể là link lỗi đã max_retry, hoặc link chưa đến lượt nếu bị dừng)
-                    if current_remaining_links_in_master_queue:
-                        final_message += f"   - Link còn lại trong hàng chờ cuối cùng: {len(current_remaining_links_in_master_queue)}\n"
-                        for rem_link in current_remaining_links_in_master_queue[:3]: 
-                            retry_c_rem = self.download_retry_counts.get(rem_link, 0)
-                            status_rem = f"(Đã thử {retry_c_rem} lần)" if retry_c_rem > 0 else "(Chưa thử/Đã reset)"
-                            if retry_c_rem >= MAX_RETRIES_PER_LINK:
-                                status_rem = f"(Đã thử {retry_c_rem} lần - Tối đa)"
-                            final_message += f"      - {rem_link[:80]}... {status_rem}\n"
-                        if len(current_remaining_links_in_master_queue) > 3:
-                            final_message += f"      ... và {len(current_remaining_links_in_master_queue) - 3} link khác.\n"
-                    elif not error_links_encountered_this_run and success_count_this_run == processed_count_this_run and processed_count_this_run > 0 : 
-                         final_message += f"   🎉 Tất cả {success_count_this_run} link yêu cầu đã được xử lý thành công!\n"
-                    elif processed_count_this_run == 0:
-                         final_message += f"   ℹ️ Không có link nào được xử lý trong lượt này (hàng chờ có thể đã trống từ đầu).\n"
-
-
-                    is_auto_sub_request = config_from_start.get("auto_sub_after_download", False)
-                    if is_auto_sub_request:
-
-                        verified_video_files = [f for f in successfully_downloaded_video_files_this_run if os.path.exists(f)] #Sửa thành _this_run
-                        if verified_video_files:
-                            should_auto_sub = True
-                            files_for_sub = verified_video_files 
-                            final_message += f"\n🔄 Đã tải xong {len(files_for_sub)} file video. Chuẩn bị tự động tạo phụ đề...\n"
-                        else:
-                            final_message += "\n⚠️ Yêu cầu tự động sub, nhưng không có file video hợp lệ nào được tải thành công để xử lý.\n"
-                    else:
-                         final_message += "\n(Không yêu cầu tự động sub).\n"
-
-                    if config_from_start.get("do_sound", False) and config_from_start.get("sound_file") and PLAYSOUND_AVAILABLE:
-                       self.after(100, lambda: self.download_view_frame.log_download(" 🔊 Đang phát âm thanh hoàn tất tải..."))
-                       play_sound_async(config_from_start["sound_file"]) # Đã sửa ở bước trước
-
-                self.after(150, lambda msg=final_message: self.download_view_frame.log_download(msg))
-
-                final_status_text = "✅ Tải hoàn tất!" 
-                if self.stop_event.is_set(): 
-                    final_status_text = "🛑 Đã dừng bởi người dùng/lỗi."
-                elif current_remaining_links_in_master_queue: 
-                    final_status_text = f"⚠️ Hoàn tất với {len(current_remaining_links_in_master_queue)} link còn lại/lỗi."
-                elif should_auto_sub: 
-                    final_status_text = f"✅ Tải xong {len(files_for_sub)} video! Đang chuyển sang Sub..."
-                
-                self.after(200, lambda text=final_status_text: self.update_status(text))
-
-                if not should_auto_sub: 
-                    self.after(250, lambda: self.download_view_frame.set_download_ui_state(downloading=False))
-
-                if not self.stop_event.is_set() and not should_auto_sub:
-                     self.after(250, lambda: self.download_view_frame.update_download_progress(0))
-
-                # Lấy trạng thái của checkbox Tự động Upload
-                is_auto_upload_request = self.auto_upload_after_download_var.get()
-
-                if should_auto_sub:
-                    # Ưu tiên chuỗi Sub -> Dub/Upload trước (logic này đã xử lý việc upload sau sub)
-                    self.after(500, self._trigger_auto_sub, successfully_created_task_objects_this_run, config_from_start.get("and_then_dub", False))
-                    logging.info(f"[{thread_name}] RUN_DOWNLOAD: Gọi _trigger_auto_sub với {len(successfully_created_task_objects_this_run)} task objects...")
-                
-                # <<< BẮT ĐẦU THAY ĐỔI CHÍNH Ở ĐÂY >>>
-                elif is_auto_upload_request and successfully_created_task_objects_this_run:
-                    # Nếu chỉ bật Auto Upload (không bật Auto Sub)
-                    logging.info(f"[{thread_name}] RUN_DOWNLOAD: Chuẩn bị thêm {len(successfully_created_task_objects_this_run)} video đã tải vào hàng chờ Upload.")
-                    self.after(0, lambda: self.update_status(f"✅ Tải xong! Đang thêm vào hàng chờ Upload..."))
-
-                    # Lặp qua các task object đã tạo và thêm vào hàng chờ upload
-                    for task_obj in successfully_created_task_objects_this_run:
-                        # Việc gọi self.after ở đây sẽ đảm bảo các tác vụ thêm vào hàng chờ được thực hiện tuần tự trên luồng chính
-                        self.after(10, self._add_completed_video_to_upload_queue, task_obj)
-                    
-                    # SAU KHI ĐÃ LÊN LỊCH THÊM VÀO HÀNG CHỜ, BÂY GIỜ CHÚNG TA SẼ KÍCH HOẠT QUÁ TRÌNH UPLOAD
-                    def start_upload_chain():
-                        logging.info(f"[{thread_name}] RUN_DOWNLOAD: Kích hoạt _start_youtube_batch_upload sau khi đã thêm file từ Download.")
-                        # Chuyển sang tab Upload cho người dùng thấy
-                        try:
-                            upload_tab_value = "📤 Upload YT" 
-                            if hasattr(self, 'view_switcher') and self.view_switcher.get() != upload_tab_value:
-                                self.view_switcher.set(upload_tab_value)
-                                self.switch_view(upload_tab_value)
-                        except Exception as e_switch:
-                            logging.error(f"[{thread_name}] Lỗi khi tự động chuyển sang tab Upload: {e_switch}")
-
-                        self._start_youtube_batch_upload()
-
-                    # Lên lịch để bắt đầu chuỗi upload sau một khoảng trễ nhỏ (ví dụ 500ms)
-                    # để đảm bảo các tác vụ "thêm vào hàng chờ" đã được thực hiện xong.
-                    self.after(500, start_upload_chain)
-
-                else:
-                    # Trường hợp không có chuỗi tự động nào, chỉ dọn dẹp và kết thúc
-                    self.after(250, lambda: self.download_view_frame.set_download_ui_state(downloading=False))
-                    self.after(600, self._check_completion_and_shutdown) 
-
-                self.download_thread = None 
-                logging.info(f"[{thread_name}] RUN_DOWNLOAD: Đã hoàn tất khối finally và kết thúc.")
-
-            except Exception as e_final_outer: 
-                logging.critical(f"[{thread_name}] RUN_DOWNLOAD: LỖI NGHIÊM TRỌNG không xử lý được: {e_final_outer}", exc_info=True)
-                self.after(0, lambda: self.download_view_frame.set_download_ui_state(downloading=False)) 
-                self.after(0, lambda: self.update_status(f"❌ Lỗi nghiêm trọng khi tải!"))
-                self.is_downloading = False 
-                self.current_download_url = None
-                self.download_thread = None
+    # Hàm đã được di chuyển sang ui/tabs/download_tab.py (DownloadTab.run_download)
 
 
 # Hàm logic: Kích hoạt quá trình tự động tạo phụ đề sau khi tải xong
@@ -19843,108 +18816,43 @@ class SubtitleApp(ctk.CTk):
 
 # Hàm hỗ trợ UI Download: Cập nhật hiển thị hàng chờ tải xuống
     def update_download_queue_display(self):
-        """ Cập nhật nội dung hiển thị trong CTkScrollableFrame của hàng chờ download (Thêm nút Lên/Xuống/Xóa). """
-        queue_widget = getattr(self.download_view_frame, 'download_queue_section', None) if hasattr(self, 'download_view_frame') else None
-        if not queue_widget or not hasattr(queue_widget, 'winfo_exists') or not queue_widget.winfo_exists():
-            return
-
-        for widget in queue_widget.winfo_children():
-            widget.destroy()
-
-        current_url = getattr(self, 'current_download_url', None)
-        all_urls_in_list = getattr(self, 'download_urls_list', [])
-        
-        waiting_urls_only = []
-        if all_urls_in_list:
-            if current_url:
-                temp_waiting_list = []
-                found_current_in_list = False
-                for u_in_all in all_urls_in_list:
-                    if u_in_all == current_url and not found_current_in_list:
-                        found_current_in_list = True 
-                        continue 
-                    temp_waiting_list.append(u_in_all)
-                
-                if not found_current_in_list and current_url is not None:
-                     waiting_urls_only = list(all_urls_in_list)
-                else:
-                     waiting_urls_only = temp_waiting_list
-            else: 
-                waiting_urls_only = list(all_urls_in_list)
-        
-        queue_len_display = len(waiting_urls_only)
-
-        if current_url:
-            frame = ctk.CTkFrame(queue_widget, fg_color="#007bff", corner_radius=5)
-            frame.pack(fill="x", pady=(2, 3), padx=2)
-            display_url_current = current_url if len(current_url) < 80 else current_url[:77] + "..."
-            label_text = f"▶️ ĐANG TẢI:\n   {display_url_current}"
-            ctk.CTkLabel(frame, text=label_text, font=("Segoe UI", 10, "bold"), justify="left", anchor='w', text_color="white").pack(side="left", padx=5, pady=3)
-
-        if not waiting_urls_only and not current_url:
-            ctk.CTkLabel(queue_widget, text="[Hàng chờ download trống]", font=("Segoe UI", 11), text_color="gray").pack(anchor="center", pady=20)
-        elif not waiting_urls_only and current_url:
-            ctk.CTkLabel(queue_widget, text="[Đang xử lý link cuối cùng...]", font=("Segoe UI", 10, "italic"), text_color="gray").pack(anchor="center", pady=5)
-        elif waiting_urls_only:
-            for i, url_in_waiting_list in enumerate(waiting_urls_only):
-                item_frame = ctk.CTkFrame(queue_widget, fg_color="transparent")
-                item_frame.pack(fill="x", padx=2, pady=(1,2))
-
-                display_url_waiting = url_in_waiting_list
-                retry_count_for_this_url = self.download_retry_counts.get(url_in_waiting_list, 0)
-                status_suffix = f" (Lỗi - thử {retry_count_for_this_url} lần)" if retry_count_for_this_url > 0 else ""
-
-                ctk.CTkLabel(item_frame, text=f"{i+1}. {display_url_waiting}{status_suffix}", anchor="w", font=("Segoe UI", 10)).pack(side="left", padx=(5, 0), expand=True, fill="x")
-
-                # --- KHUNG CHỨA CÁC NÚT ĐIỀU KHIỂN ---
-                controls_button_frame = ctk.CTkFrame(item_frame, fg_color="transparent")
-                controls_button_frame.pack(side="right", padx=(0,5))
-
-                # Nút Lên
-                # SỬA STATE: Chỉ NORMAL nếu không đang tải VÀ không phải mục đầu tiên
-                up_button_state_dl = ctk.NORMAL if not self.is_downloading and i > 0 else ctk.DISABLED
-                up_button_dl = ctk.CTkButton(controls_button_frame, text="↑",
-                                          width=26, height=26,
-                                          font=("Segoe UI", 14, "bold"),
-                                          command=lambda idx_disp=i: self.move_item_in_download_queue(idx_disp, "up"), # SỬA HÀM GỌI
-                                          state=up_button_state_dl) # SỬA STATE
-                up_button_dl.pack(side="left", padx=(0, 2))
-
-                # Nút Xuống
-                # SỬA STATE: Chỉ NORMAL nếu không đang tải VÀ không phải mục cuối cùng
-                down_button_state_dl = ctk.NORMAL if not self.is_downloading and i < queue_len_display - 1 else ctk.DISABLED
-                down_button_dl = ctk.CTkButton(controls_button_frame, text="↓",
-                                            width=26, height=26,
-                                            font=("Segoe UI", 14, "bold"),
-                                            command=lambda idx_disp=i: self.move_item_in_download_queue(idx_disp, "down"), # SỬA HÀM GỌI
-                                            state=down_button_state_dl) # SỬA STATE
-                down_button_dl.pack(side="left", padx=2)
-
-                # Nút Xóa
-                # SỬA STATE: Chỉ NORMAL nếu không đang tải
-                del_button_state_dl = ctk.NORMAL if not self.is_downloading else ctk.DISABLED
-                del_button_dl = ctk.CTkButton(controls_button_frame, text="✕",
-                                          width=26, height=26,
-                                          font=("Segoe UI", 12, "bold"),
-                                          command=lambda idx_disp=i: self.remove_item_from_download_queue(idx_disp), # SỬA HÀM GỌI
-                                          fg_color="#E74C3C", hover_color="#C0392B",
-                                          text_color="white", state=del_button_state_dl) # SỬA STATE
-                del_button_dl.pack(side="left", padx=(2,0))
+        """
+        Wrapper gọi đến DownloadTab.update_download_queue_display()
+        Hàm đã được di chuyển sang ui/tabs/download_tab.py (DownloadTab.update_download_queue_display)
+        """
+        if hasattr(self, 'download_view_frame') and hasattr(self.download_view_frame, 'update_download_queue_display'):
+            self.download_view_frame.update_download_queue_display()
+        else:
+            logging.error("DownloadTab không có hàm update_download_queue_display()")
 
 
 # Hàm logic (chạy trong luồng): Kiểm tra trạng thái CUDA và VRAM GPU
     def check_cuda_status_thread(self, callback=None): 
         """
-        [REFACTORED] Chạy kiểm tra CUDA và lấy VRAM trong thread.
-        Sử dụng ModelService để kiểm tra CUDA, đồng bộ state với Piu.py.
+        Chạy kiểm tra CUDA và lấy VRAM trong thread.
+        Giống file gốc: gọi trực tiếp is_cuda_available() và đảm bảo luôn gọi callback.
         """
         logging.info("Bắt đầu kiểm tra trạng thái CUDA và VRAM (có callback)...")
-        # Gọi ModelService để kiểm tra CUDA
-        status, vram_mb = self.model_service.check_cuda_availability()
-        # Đồng bộ state với Piu.py
-        self.cuda_status = status
-        self.gpu_vram_mb = vram_mb
-        # Lên lịch chạy hàm _update_cuda_status_ui trên luồng chính với cả status, vram_mb, và callback
+        try:
+            # Gọi trực tiếp is_cuda_available() giống file gốc
+            from utils.system_utils import is_cuda_available
+            status, vram_mb = is_cuda_available()
+            # Đồng bộ state với Piu.py và ModelService
+            self.cuda_status = status
+            self.gpu_vram_mb = vram_mb
+            if hasattr(self, 'model_service'):
+                self.model_service.cuda_status = status
+                self.model_service.gpu_vram_mb = vram_mb
+        except Exception as e:
+            logging.error(f"Lỗi khi kiểm tra CUDA: {e}", exc_info=True)
+            status, vram_mb = "ERROR", 0
+            self.cuda_status = "ERROR"
+            self.gpu_vram_mb = 0
+            if hasattr(self, 'model_service'):
+                self.model_service.cuda_status = "ERROR"
+                self.model_service.gpu_vram_mb = 0
+        
+        # Luôn đảm bảo gọi callback để cập nhật UI, ngay cả khi có lỗi
         self.after(0, self._update_cuda_status_ui, status, vram_mb, callback) 
 
 
@@ -19978,7 +18886,14 @@ class SubtitleApp(ctk.CTk):
             status_color = ("#B71C1C", "#E57373")  # (Dark Red cho Light, Light Red cho Dark)
         
         # Cập nhật label chuyên dụng trong tab Whisper
-        if hasattr(self, 'cuda_status_label') and self.cuda_status_label and self.cuda_status_label.winfo_exists():
+        # cuda_status_label nằm trong SubtitleTab, không phải trong Piu.py
+        subtitle_tab = getattr(self, 'subtitle_view_frame', None)
+        if subtitle_tab and hasattr(subtitle_tab, 'cuda_status_label'):
+            cuda_label = subtitle_tab.cuda_status_label
+            if cuda_label and cuda_label.winfo_exists():
+                cuda_label.configure(text=status_message_to_display, text_color=status_color)
+        # Backward compatibility: Cũng cập nhật nếu có trong self (giống file gốc)
+        elif hasattr(self, 'cuda_status_label') and self.cuda_status_label and self.cuda_status_label.winfo_exists():
             self.cuda_status_label.configure(text=status_message_to_display, text_color=status_color)
         
         # Cập nhật thanh trạng thái chính ở dưới cùng, nếu không có tác vụ nào khác đang chạy
@@ -20049,324 +18964,9 @@ class SubtitleApp(ctk.CTk):
 
 
 
-# Các hàm xử lý Google Sheet---------------------------------------------------------------------------------------------------------------------------
-    # Hàm hành động: Bắt đầu quá trình lấy link từ Google Sheet
-    def fetch_links_from_sheet(self, callback=None, auto_triggered=False):
-        """
-        Xử lý việc lấy Sheet ID và Range từ người dùng (nếu cần khi không phải auto_triggered)
-        và khởi chạy luồng _fetch_sheet_data_thread để lấy link.
-
-        Args:
-            callback (function, optional): Hàm được gọi sau khi luồng lấy dữ liệu Sheet hoàn tất.
-                                           Signature: callback(success: bool, links: list|None, error_message: str|None)
-            auto_triggered (bool, optional): True nếu được gọi tự động từ run_download.
-                                             Sẽ không hiển thị dialog hỏi ID/Range hoặc các messagebox thông thường.
-        """
-        current_thread_name = threading.current_thread().name
-        logging.info(f"[{current_thread_name}] Bắt đầu fetch_links_from_sheet. Auto: {auto_triggered}, Có callback: {callable(callback)}")
-
-        sheet_id = self.sheet_id_var.get().strip()
-        sheet_range = self.sheet_range_var.get().strip()
-
-        # --- Xử lý lấy Sheet ID và Range từ người dùng nếu không phải auto_triggered ---
-        if not auto_triggered:
-            if not sheet_id:
-                dialog_id = ctk.CTkInputDialog(text="Vui lòng nhập Google Sheet ID:", title="Nhập Sheet ID")
-                try:
-                    self.update_idletasks()
-                    dialog_id.update_idletasks()
-                    x = self.winfo_x() + (self.winfo_width() // 2) - (dialog_id.winfo_reqwidth() // 2)
-                    y = self.winfo_y() + (self.winfo_height() // 2) - (dialog_id.winfo_reqheight() // 2)
-                    dialog_id.geometry(f"+{x}+{y}")
-                except Exception as e_center: logging.warning(f"Lỗi căn giữa dialog ID: {e_center}")
-                
-                entered_id = dialog_id.get_input()
-                if entered_id is not None and entered_id.strip():
-                    sheet_id = entered_id.strip()
-                    self.sheet_id_var.set(sheet_id)
-                    self.cfg['sheet_id'] = sheet_id # Cập nhật config trực tiếp
-                else:
-                    logging.info(f"[{current_thread_name}] Người dùng hủy nhập Sheet ID.")
-                    if callback: self.after(0, lambda: callback(False, None, "Người dùng hủy nhập Sheet ID.")) # Gọi callback trên luồng chính
-                    else: messagebox.showwarning("Thiếu thông tin", "Bạn cần nhập Google Sheet ID để tiếp tục.", parent=self)
-                    if hasattr(self, 'download_view_frame'): self.download_view_frame._reenable_fetch_button() # Bật lại nút nếu nó bị disable
-                    return
-            
-            default_range_example = "Sheet1!B2:B" # Đưa ra ngoài để dùng chung
-            if not sheet_range:
-                dialog_range = ctk.CTkInputDialog(text=f"Vui lòng nhập Phạm vi cần đọc:\n(Ví dụ: {default_range_example})", title="Nhập Phạm vi Sheet")
-                try:
-                    self.update_idletasks()
-                    dialog_range.update_idletasks()
-                    x = self.winfo_x() + (self.winfo_width() // 2) - (dialog_range.winfo_reqwidth() // 2)
-                    y = self.winfo_y() + (self.winfo_height() // 2) - (dialog_range.winfo_reqheight() // 2)
-                    dialog_range.geometry(f"+{x}+{y}")
-                except Exception as e_center: logging.warning(f"Lỗi căn giữa dialog Range: {e_center}")
-
-                entered_range = dialog_range.get_input()
-                if entered_range is not None and entered_range.strip():
-                    if '!' not in entered_range or not entered_range.split('!')[1]: # Kiểm tra định dạng cơ bản
-                        logging.warning(f"[{current_thread_name}] Định dạng Phạm vi Sheet không hợp lệ: {entered_range}")
-                        if callback: self.after(0, lambda: callback(False, None, f"Định dạng Phạm vi Sheet không hợp lệ: {entered_range}"))
-                        else: messagebox.showerror("Sai định dạng", f"Phạm vi '{entered_range}' không hợp lệ.\nVí dụ đúng: {default_range_example}", parent=self)
-                        if hasattr(self, 'download_view_frame'): self.download_view_frame._reenable_fetch_button()
-                        return
-                    else:
-                        sheet_range = entered_range.strip()
-                        self.sheet_range_var.set(sheet_range)
-                        self.cfg['sheet_range'] = sheet_range # Cập nhật config trực tiếp
-                else:
-                    logging.info(f"[{current_thread_name}] Người dùng hủy nhập Phạm vi Sheet.")
-                    if callback: self.after(0, lambda: callback(False, None, "Người dùng hủy nhập Phạm vi Sheet."))
-                    else: messagebox.showwarning("Thiếu thông tin", f"Bạn cần nhập Phạm vi Sheet (ví dụ: {default_range_example}) để tiếp tục.", parent=self)
-                    if hasattr(self, 'download_view_frame'): self.download_view_frame._reenable_fetch_button()
-                    return
-        
-        # --- Kiểm tra lại ID và Range trước khi chạy thread (quan trọng cho cả auto và manual) ---
-        if not sheet_id or not sheet_range:
-            log_msg = f"[{current_thread_name}] Thiếu Sheet ID ('{sheet_id}') hoặc Range ('{sheet_range}') để lấy link."
-            logging.error(log_msg)
-            if callback: self.after(0, lambda: callback(False, None, "Thiếu Sheet ID hoặc Range trong cấu hình."))
-            if not auto_triggered: # Chỉ hiện lỗi cho người dùng nếu họ nhấn nút
-                messagebox.showerror("Thiếu Thông Tin", "Sheet ID hoặc Phạm vi không được để trống trong cấu hình hoặc ô nhập.", parent=self)
-                if hasattr(self, 'download_view_frame'): self.download_view_frame._reenable_fetch_button()
-            return
-
-        # Lưu cấu hình nếu người dùng đã nhập (không phải auto) và có thay đổi
-        if not auto_triggered: 
-            self.save_current_config() # save_current_config sẽ lấy giá trị từ các StringVar
-            logging.info(f"[{current_thread_name}] Đã lưu config (nếu có thay đổi từ dialog) trước khi lấy link Sheet.")
-
-        # --- Vô hiệu hóa nút và cập nhật status (CHỈ KHI KHÔNG PHẢI AUTO_TRIGGERED) ---
-        if not auto_triggered:
-            self.update_status("🔄 Đang lấy link từ Google Sheet...")
-            if hasattr(self, 'add_sheet_button') and self.add_sheet_button and self.add_sheet_button.winfo_exists():
-                try: self.add_sheet_button.configure(state="disabled", text="Đang lấy...")
-                except Exception: pass # Bỏ qua nếu nút không tồn tại/lỗi
-        
-        # --- Khởi chạy luồng lấy dữ liệu ---
-        logging.info(f"[{current_thread_name}] Chuẩn bị chạy _fetch_sheet_data_thread. SheetID: {sheet_id}, Range: {sheet_range}, Auto: {auto_triggered}, Callback: {callable(callback)}")
-        thread = threading.Thread(
-            target=self._fetch_sheet_data_thread, 
-            args=(sheet_id, sheet_range, callback, auto_triggered), # Truyền callback và auto_triggered
-            daemon=True, 
-            name="SheetReaderThread"
-        )
-        thread.start()
-
-
-# Hàm logic (chạy trong luồng): Lấy dữ liệu từ Google Sheet
-    def _fetch_sheet_data_thread(self, sheet_id, sheet_range, callback=None, auto_triggered=False):
-        """
-        Luồng thực hiện lấy dữ liệu từ Google Sheet bằng API chính thức.
-        Gọi callback khi hoàn thành với kết quả.
-        """
-        thread_name = threading.current_thread().name
-        logging.info(f"[{thread_name}] Bắt đầu _fetch_sheet_data_thread. SheetID: {sheet_id}, Range: {sheet_range}, Auto: {auto_triggered}")
-
-        service = None
-        fetched_links_list = None 
-        was_successful = False
-        error_msg_for_callback = None
-
-        try:
-            logging.debug(f"[{thread_name}] Đang thử lấy service Google Sheets...")
-            service = get_google_api_service(api_name='sheets', api_version='v4') # Gọi đúng tên và truyền tham số Sheets API
-
-            if service is None:
-                # Lỗi xảy ra trong get_sheets_service() hoặc người dùng hủy xác thực
-                error_msg_for_callback = "Lỗi xác thực hoặc người dùng hủy kết nối Google Sheets."
-                logging.error(f"[{thread_name}] {error_msg_for_callback}")
-                
-                if auto_triggered and not self.cfg.get("google_auth_declined_in_current_session", False):
-                    def _handle_auto_auth_fail_for_sheet_thread():
-                        self.disable_auto_sheet_check_var.set(True) 
-                        self.cfg["disable_auto_sheet_check"] = True 
-                        self.cfg["google_auth_declined_in_current_session"] = True 
-                        save_config(self.cfg) # Lưu lại config
-                        logging.warning(f"[{thread_name}] Lỗi xác thực Google (tự động), đã tự động tắt kiểm tra Sheet cho session này và lưu config.")
-                    self.after(0, _handle_auto_auth_fail_for_sheet_thread)
-            else:
-                # Xác thực thành công, xóa cờ lỗi session (nếu có) để lần sau nếu có lỗi vẫn hiện UI xác thực
-                if "google_auth_declined_in_current_session" in self.cfg:
-                    logging.info(f"[{thread_name}] Xác thực Google thành công, xóa cờ 'google_auth_declined_in_current_session'.")
-                    self.cfg.pop("google_auth_declined_in_current_session")
-                    save_config(self.cfg) # Lưu lại config
-                
-                logging.info(f"[{thread_name}] Lấy service Google Sheets thành công. Đang gọi API...")
-                sheet_api_service = service.spreadsheets() # Đổi tên biến để tránh nhầm lẫn với module
-                result = sheet_api_service.values().get(spreadsheetId=sheet_id, range=sheet_range).execute()
-                values = result.get('values', [])
-                logging.info(f"[{thread_name}] Phản hồi từ Google Sheets API: {len(values)} hàng dữ liệu.")
-
-                if not values:
-                    logging.info(f"[{thread_name}] Không tìm thấy dữ liệu (hàng rỗng) trong phạm vi Sheet chỉ định: {sheet_range}")
-                    was_successful = True 
-                    fetched_links_list = [] # Trả về list rỗng nếu không có dữ liệu
-                    error_msg_for_callback = "Không có dữ liệu trong phạm vi Sheet đã chọn." 
-                else:
-                    temp_links = []
-                    for row_idx, row_data in enumerate(values):
-                        if row_data and len(row_data) > 0: # Kiểm tra hàng và cột có tồn tại
-                             link_value = str(row_data[0]).strip() # Giả sử link ở cột đầu tiên (index 0)
-                             if link_value.startswith(('http://', 'https://')):
-                                  temp_links.append(link_value)
-                             elif link_value: # Nếu có giá trị nhưng không phải link
-                                  logging.warning(f"[{thread_name}] Bỏ qua giá trị không phải URL từ hàng {row_idx+1}, cột 1: '{link_value[:60]}...'")
-                        else:
-                             logging.debug(f"[{thread_name}] Bỏ qua hàng rỗng hoặc không có cột đầu tiên ở hàng {row_idx+1} từ sheet.")
-                    
-                    fetched_links_list = temp_links
-                    was_successful = True # API gọi thành công, dù có thể không có link nào hợp lệ
-                    logging.info(f"[{thread_name}] Trích xuất được {len(fetched_links_list)} link hợp lệ từ Sheet.")
-        
-        except HttpError as err:
-            was_successful = False # Đánh dấu là không thành công
-            error_content_decoded = getattr(err, 'content', b'').decode('utf-8', 'replace')
-            error_msg_for_callback = f"Lỗi Google API (Sheet): Mã {err.resp.status}. "
-            logging.error(f"[{thread_name}] {error_msg_for_callback} Nội dung: {error_content_decoded}", exc_info=False)
-            try: # Cố gắng parse lỗi chi tiết từ JSON
-                 error_json = json.loads(error_content_decoded)
-                 error_detail_msg = error_json.get('error', {}).get('message', 'Không có chi tiết lỗi cụ thể từ JSON.')
-                 error_msg_for_callback += error_detail_msg
-                 # Thêm gợi ý dựa trên nội dung lỗi
-                 if "PERMISSION_DENIED" in error_content_decoded.upper(): # upper() để bắt cả chữ thường
-                     error_msg_for_callback += "\nGợi ý: Sheet có thể chưa được chia sẻ quyền xem cho tài khoản Google đã xác thực, hoặc Sheet ID/Phạm vi không đúng."
-                 elif "REQUESTED_ENTITY_WAS_NOT_FOUND" in error_content_decoded.upper():
-                      error_msg_for_callback += f"\nGợi ý: Sheet ID '{sheet_id}' có thể không tồn tại hoặc bạn không có quyền truy cập."
-                 elif "UNABLE_TO_PARSE_RANGE" in error_content_decoded.upper():
-                       error_msg_for_callback += f"\nGợi ý: Phạm vi '{sheet_range}' không hợp lệ."
-            except json.JSONDecodeError:
-                 error_msg_for_callback += f"Không thể phân tích phản hồi lỗi JSON. Phản hồi thô: {error_content_decoded[:250]}..."
-            # Không return sớm, để khối finally gọi callback
-
-        except Exception as e: # Bắt các lỗi không mong muốn khác
-            was_successful = False
-            error_msg_for_callback = f"Lỗi không xác định khi lấy link từ Sheet: {str(e)}"
-            logging.error(f"[{thread_name}] {error_msg_for_callback}", exc_info=True)
-            # Không return sớm
-        
-        finally:
-            log_final_status = f"Hoàn tất _fetch_sheet_data_thread. Thành công kỹ thuật (API call): {was_successful}, Số link trích xuất: {len(fetched_links_list) if fetched_links_list is not None else 'N/A'}"
-            logging.info(f"[{thread_name}] {log_final_status}")
-            
-            if callback:
-                try:
-                    # Gọi callback trên luồng chính
-                    self.after(0, lambda cb=callback, s=was_successful, l=fetched_links_list, err=error_msg_for_callback: cb(s, l, err))
-                    logging.debug(f"[{thread_name}] Đã lên lịch gọi callback với success={was_successful}.")
-                except Exception as e_cb:
-                    logging.error(f"[{thread_name}] Lỗi khi lên lịch gọi callback sau khi lấy link từ Sheet: {e_cb}", exc_info=True)
-            
-            # Chỉ xử lý UI (nút, status) nếu KHÔNG phải auto_triggered VÀ KHÔNG có callback
-            # (Vì nếu có callback, callback sẽ chịu trách nhiệm xử lý UI tiếp theo)
-            if not auto_triggered and not callback:
-                if was_successful:
-                    if fetched_links_list: # Có link
-                        self.after(0, self._process_sheet_links, fetched_links_list) 
-                        self.after(0, self.update_status, f"✅ Đã lấy {len(fetched_links_list)} link từ Google Sheet.")
-                    else: # Không có link (list rỗng)
-                         self.after(0, self.update_status, f"ℹ️ Không tìm thấy link nào trong phạm vi Sheet đã chọn.")
-                         self.after(0, lambda msg="Không tìm thấy link nào trong phạm vi Sheet được chọn.": messagebox.showinfo("Không có link", msg, parent=self))
-                else: # Không thành công (có error_msg_for_callback)
-                    self.after(0, self.update_status, f"❌ Lỗi lấy link Sheet: {error_msg_for_callback[:100]}...") # Giới hạn độ dài msg
-                    self.after(0, lambda msg=error_msg_for_callback: messagebox.showerror("Lỗi lấy link từ Sheet", msg, parent=self))
-                
-                if hasattr(self, 'download_view_frame'): self.after(10, self.download_view_frame._reenable_fetch_button) # Bật lại nút "Thêm từ Sheet"
-
-
-
-# Hàm hỗ trợ UI: Xử lý các link lấy được từ Sheet (thêm vào Textbox)
-    def _process_sheet_links(self, links):
-        """ Cập nhật ô Textbox với các link lấy được từ Sheet (chạy trên luồng chính) """
-        download_textbox = getattr(self.download_view_frame, 'download_url_text', None) if hasattr(self, 'download_view_frame') else None
-        if not download_textbox or not download_textbox.winfo_exists():
-            logging.error("Textbox download_url_text không tồn tại để cập nhật link từ Sheet.")
-            return
-
-        if not isinstance(links, list):
-             logging.error(f"Dữ liệu links nhận được không phải là list: {type(links)}")
-             messagebox.showerror("Lỗi dữ liệu", "Dữ liệu link nhận được từ Google Sheet không đúng định dạng.", parent=self)
-             return
-
-        if not links:
-            logging.info("Không có link hợp lệ nào được trả về từ Sheet.")
-            messagebox.showinfo("Thông báo", "Không tìm thấy link nào trong phạm vi đã chọn trên Google Sheet hoặc Sheet trống.", parent=self)
-            return
-
-        try:
-            current_content = download_textbox.get("1.0", "end-1c")
-            current_links = set(line.strip() for line in current_content.splitlines() if line.strip())
-
-            added_links = []
-            for link in links:
-                if link not in current_links:
-                    added_links.append(link)
-                    current_links.add(link)
-
-            if not added_links:
-                 logging.info("Không có link mới nào từ Sheet để thêm vào Textbox.")
-                 messagebox.showinfo("Thông báo", "Các link trên Sheet đã có trong danh sách tải.", parent=self)
-                 return
-
-            new_links_str = "\n".join(added_links)
-            final_text = current_content
-            if current_content and new_links_str:
-                final_text += "\n"
-            final_text += new_links_str
-
-            download_textbox.delete("1.0", "end")
-            download_textbox.insert("1.0", final_text)
-            download_textbox.see("end")
-
-            logging.info(f"Đã thêm {len(added_links)} link mới từ Sheet vào Textbox.")
-            messagebox.showinfo("Thành công", f"Đã thêm thành công {len(added_links)} link mới từ Google Sheet.", parent=self)
-
-        except Exception as e:
-            logging.error(f"Lỗi khi cập nhật Textbox với link từ Sheet: {e}", exc_info=True)
-            messagebox.showerror("Lỗi cập nhật", "Không thể hiển thị link lấy được từ Google Sheet.", parent=self)
-
-
-# Hàm đồng bộ (ít dùng): Lấy link từ Sheet (không chạy luồng)
-    def _fetch_links_from_sheet_sync(self, service, sheet_id, sheet_range):
-        """
-        Gọi API Google Sheets đồng bộ để lấy danh sách link.
-        Trả về list các link hoặc None nếu có lỗi.
-        """
-        thread_name = threading.current_thread().name
-        logging.info(f"[{thread_name}] SYNC Fetch: Đang gọi Sheets API. ID: {sheet_id}, Phạm vi: {sheet_range}")
-
-        if not service:
-            logging.error(f"[{thread_name}] SYNC Fetch: Thiếu đối tượng service Google Sheets.")
-            return None
-
-        try:
-            sheet = service.spreadsheets()
-            result = sheet.values().get(spreadsheetId=sheet_id, range=sheet_range).execute()
-            values = result.get('values', [])
-            logging.info(f"[{thread_name}] SYNC Fetch: API trả về {len(values)} hàng.")
-
-            if not values:
-                return []
-
-            links = []
-            for row in values:
-                if row:
-                     link_value = str(row[0]).strip()
-                     if link_value.startswith(('http://', 'https://')):
-                          links.append(link_value)
-            logging.info(f"[{thread_name}] SYNC Fetch: Trích xuất {len(links)} link hợp lệ.")
-            return links
-
-        except HttpError as err:
-            error_content = getattr(err, 'content', b'').decode('utf-8')
-            logging.error(f"[{thread_name}] SYNC Fetch: Lỗi HTTP Google API: {err.resp.status} - {error_content}", exc_info=False)
-            return None
-        except Exception as e:
-            logging.error(f"[{thread_name}] SYNC Fetch: Lỗi không mong đợi: {e}", exc_info=True)
-            return None
-
-
+# Các hàm xử lý Google Sheet
+    # Các hàm này đã được di chuyển sang ui/tabs/download_tab.py (DownloadTab)
+    # fetch_links_from_sheet(), _fetch_sheet_data_thread(), _process_sheet_links(), _fetch_links_from_sheet_sync()
 
 # Hàm sự kiện: Xử lý khi người dùng thay đổi lựa chọn engine dịch
     def on_engine_change(self, selected_engine, update_status_bar=True): # Thêm tham số update_status_bar
@@ -23709,7 +22309,7 @@ class SubtitleApp(ctk.CTk):
         if not (hasattr(self, 'chain_download_sub_dub_active') and self.chain_download_sub_dub_active):
             # Chỉ đặt/reset shutdown_requested_by_task nếu đây là một lô dubbing ĐỘC LẬP,
             # không phải là một phần của chuỗi D-S-D hoặc S-D đang diễn ra.
-            if self.download_shutdown_var.get(): # Giả sử cờ này vẫn dùng chung
+            if hasattr(self, 'download_view_frame') and self.download_view_frame.download_shutdown_var.get(): # Cờ tắt máy từ DownloadTab
                 self.shutdown_requested_by_task = True
                 logging.info(f"[DubBatchStart] Tác vụ Dub-Only: 'Tắt máy khi hoàn thành' BẬT. Ghi nhận yêu cầu.")
             else:
@@ -25352,8 +23952,8 @@ class SubtitleApp(ctk.CTk):
             had_api_key_errors_in_this_batch = getattr(self, 'dub_batch_had_api_key_errors', False)
             if not stopped and not had_api_key_errors_in_this_batch:
                 try:
-                    sound_enabled_for_dub = self.download_sound_var.get()
-                    sound_path_for_dub = self.download_sound_path_var.get()
+                    sound_enabled_for_dub = self.download_view_frame.download_sound_var.get() if hasattr(self, 'download_view_frame') else False
+                    sound_path_for_dub = self.download_view_frame.download_sound_path_var.get() if hasattr(self, 'download_view_frame') else ""
                     if sound_enabled_for_dub and sound_path_for_dub and os.path.isfile(sound_path_for_dub) and PLAYSOUND_AVAILABLE:
                         play_sound_async(sound_path_for_dub)
                 except Exception as sound_err_dub_final:
