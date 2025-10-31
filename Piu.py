@@ -77,7 +77,7 @@ from ui.tabs.subtitle_tab import SubtitleTab
 from ui.tabs.dubbing_tab import DubbingTab
 from ui.tabs.youtube_upload_tab import YouTubeUploadTab
 from utils.logging_utils import setup_logging, log_failed_task
-from ui.utils.ui_helpers import is_ui_alive, safe_after, update_path_label, norm_no_diacritics, is_readyish, locked_msg_for_view, ready_msg_for_view
+from ui.utils.ui_helpers import is_ui_alive, safe_after, update_path_label, norm_no_diacritics, is_readyish, locked_msg_for_view, ready_msg_for_view, setup_popup_window, center_popup_on_master
 from services.youtube_upload_service import upload_youtube_thumbnail, get_playlist_id_by_name, add_video_to_playlist
 from services.youtube_upload_api_service import upload_video_to_youtube
 from services.youtube_browser_upload_service import click_with_fallback, init_chrome_driver, YOUTUBE_LOCATORS
@@ -90,9 +90,10 @@ from services.ai_service import AIService
 from services.image_service import ImageService
 from services.model_service import ModelService
 from services.metadata_service import MetadataService
+from services.youtube_service import YouTubeService
 
 # --- Thêm các import cho Google Sheets API ---
-import os.path # Dùng để làm việc với đường dẫn file token/credentials
+# Note: os.path is already available via 'import os' at top
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -316,29 +317,18 @@ else:
         logging.warning(f"Chạy từ source, không tìm thấy '{_YTDLP_DEFAULT_COMMAND}' trong PATH. Tính năng tải có thể không hoạt động.")
 
 # --- Thiết lập Logging (IDEMPOTENT, KHÔNG NHÂN ĐÔI) ---
-import logging, sys, os
-from logging.handlers import RotatingFileHandler
+# Note: logging, sys, os, and RotatingFileHandler already imported above
 
 # Logging setup đã được tách ra utils/logging_utils.py
 # Gọi đúng 1 lần khi app khởi động
 setup_logging()
 
-# SCOPES - MOVED to config/constants.py
-# WHISPER_VRAM_REQ_MB - MOVED to config/constants.py  
-# YOUTUBE_CATEGORIES - MOVED to config/constants.py
-# YOUTUBE_CATEGORY_NAVIGATION_ORDER - MOVED to config/constants.py
-# API_PRICING_USD - MOVED to config/constants.py
+# Note: SCOPES, WHISPER_VRAM_REQ_MB, YOUTUBE_CATEGORIES, YOUTUBE_CATEGORY_NAVIGATION_ORDER, 
+# API_PRICING_USD have been moved to config/constants.py (imported above)
 
 
-# ============================================================
-# HÀM get_google_api_service ĐÃ ĐƯỢC DI CHUYỂN ĐẾN services/google_api_service.py
-# ============================================================
-
-# =======================================================================================================================================================================
-# LỚP MÀN HÌNH CHỜ (SPLASH SCREEN)
-# =======================================================================================================================================================================
-
-# SplashScreen class has been moved to ui/widgets/splash_screen.py
+# Note: get_google_api_service moved to services/google_api_service.py (imported above)
+# Note: SplashScreen class moved to ui/widgets/splash_screen.py (imported above)
 
 # =======================================================================================================================================================================
 
@@ -531,6 +521,7 @@ class SubtitleApp(ctk.CTk):
         self.image_service = ImageService(logger=self.logger)
         self.model_service = ModelService(logger=self.logger)
         self.metadata_service = MetadataService(logger=self.logger)
+        self.youtube_service = YouTubeService(logger=self.logger)
 
         # Chủ động lấy và lưu HWID ngay lập tức để tránh race condition.
         try:
@@ -860,8 +851,10 @@ class SubtitleApp(ctk.CTk):
         self.youtube_tags_var = ctk.StringVar(value=self.cfg.get("youtube_last_tags", ""))       # Thẻ tag (cách nhau bởi dấu phẩy)
         self.youtube_playlist_var = ctk.StringVar(value=self.cfg.get("youtube_playlist_name", "")) # Biến mới cho tên danh sách phát
 
-        self.youtube_upload_queue = [] # Hàng chờ cho các tác vụ upload
-        self.youtube_currently_processing_task_id = None # Theo dõi ID của tác vụ đang chạy
+        # YouTube upload queue - delegate to YouTubeService
+        # Keep for backward compatibility with existing code
+        self.youtube_upload_queue = self.youtube_service.queue  # Reference to service queue
+        self.youtube_currently_processing_task_id = None # Theo dõi ID của tác vụ đang chạy (sync với service)
         self.youtube_autofill_var = ctk.BooleanVar(value=self.cfg.get("youtube_autofill_enabled", False))
         self.metadata_auto_increment_thumb_var = ctk.BooleanVar(value=self.cfg.get("metadata_auto_increment_thumb", True))
         
@@ -1951,19 +1944,23 @@ class SubtitleApp(ctk.CTk):
         """Bắt đầu quá trình xử lý hàng loạt các tác vụ trong hàng chờ upload."""
         self.is_chain_handoff = False
         logging.info("[YouTubeUploadStart] Đã gỡ khóa is_chain_handoff. Quá trình upload chính thức bắt đầu.")
-
-        self._yt_batch_finished_once = False
         
         if self.is_uploading_youtube:
             messagebox.showwarning("Đang bận", "Đang trong quá trình upload hàng loạt.", parent=self)
             return
-        if not self.youtube_upload_queue:
+        if not self.youtube_service.queue:
             messagebox.showinfo("Hàng chờ trống", "Vui lòng thêm ít nhất một video vào hàng chờ upload.", parent=self)
             return
 
-        logging.info(f"--- BẮT ĐẦU UPLOAD HÀNG LOẠT ({len(self.youtube_upload_queue)} tác vụ) ---")
+        logging.info(f"--- BẮT ĐẦU UPLOAD HÀNG LOẠT ({len(self.youtube_service.queue)} tác vụ) ---")
         
-        self.is_uploading_youtube = True
+        # Bắt đầu batch qua service
+        first_task_id = self.youtube_service.queue[0]['id'] if self.youtube_service.queue else None
+        self.youtube_service.start_batch(first_task_id=first_task_id)
+        
+        # Sync với Piu state
+        self.is_uploading_youtube = self.youtube_service.is_uploading
+        self.youtube_currently_processing_task_id = self.youtube_service.currently_processing_task_id
         self.shutdown_requested_by_task = self.download_shutdown_var.get()
         self.start_time = time.time()
         self.update_time_realtime()
@@ -1983,7 +1980,7 @@ class SubtitleApp(ctk.CTk):
                 upload_tab.youtube_progress_bar.set(0) # Bắt đầu từ 0%
 
         self._update_youtube_ui_state(True)
-        self.update_status(f"Bắt đầu upload hàng loạt {len(self.youtube_upload_queue)} video...")
+        self.update_status(f"Bắt đầu upload hàng loạt {len(self.youtube_service.queue)} video...")
         
         # Bắt đầu xử lý với tác vụ đầu tiên trong hàng chờ
         self._process_next_youtube_task()
@@ -1995,13 +1992,17 @@ class SubtitleApp(ctk.CTk):
             self._on_youtube_batch_finished(stopped=True)
             return
 
-        if not self.youtube_upload_queue:
+        if not self.youtube_service.queue:
             logging.info("Hàng chờ upload trống. Hoàn tất hàng loạt.")
             self._on_youtube_batch_finished(stopped=False)
             return
         
-        task = self.youtube_upload_queue[0] 
-        self.youtube_currently_processing_task_id = task['id']
+        # Lấy task từ service
+        task = self.youtube_service.queue[0]
+        self.youtube_service.set_current_task(task['id'])
+        
+        # Sync với Piu state
+        self.youtube_currently_processing_task_id = self.youtube_service.currently_processing_task_id
         self.update_youtube_queue_display() 
 
         logging.info(f"Đang xử lý tác vụ upload: '{task['title']}' (ID: {task['id']})")
@@ -2038,6 +2039,10 @@ class SubtitleApp(ctk.CTk):
         """
         logging.warning("[YouTubeUpload] Người dùng yêu cầu dừng upload YouTube.")
         self.stop_event.set() # Dùng chung stop_event cho việc dừng các luồng dài
+        
+        # Dừng batch qua service
+        self.youtube_service.stop_batch()
+        self.is_uploading_youtube = self.youtube_service.is_uploading
 
         # Cố gắng dừng tiến trình ffmpeg/gapi-client nếu có
         if hasattr(self, 'current_process') and self.current_process and self.current_process.poll() is None:
@@ -2144,20 +2149,20 @@ class SubtitleApp(ctk.CTk):
                     self._log_youtube_upload(f"✅ Tải lên video thành công! ID: {uploaded_video_id_final}")
                     self._log_youtube_upload(f"Link video: https://youtu.be/{uploaded_video_id_final}")
 
-                    # 1. Tải lên thumbnail nếu có
+                    # 1. Tải lên thumbnail nếu có (qua service)
                     if thumbnail_path and os.path.exists(thumbnail_path):
-                        upload_youtube_thumbnail(service, uploaded_video_id_final, thumbnail_path, log_callback=self._log_youtube_upload)
+                        self.youtube_service.upload_thumbnail(service, uploaded_video_id_final, thumbnail_path, log_callback=self._log_youtube_upload)
                     else:
                         logging.info("Không có thumbnail được cung cấp hoặc file không tồn tại.")
 
-                    # 2. Thêm vào danh sách phát nếu có
+                    # 2. Thêm vào danh sách phát nếu có (qua service)
                     if playlist_name:
                         # Initialize cache if not exists
                         if not hasattr(self, 'playlist_cache'):
                             self.playlist_cache = {}
-                        playlist_id_found = get_playlist_id_by_name(service, playlist_name, self.playlist_cache)
+                        playlist_id_found = self.youtube_service.get_playlist_id(service, playlist_name, self.playlist_cache)
                         if playlist_id_found:
-                            add_video_to_playlist(service, uploaded_video_id_final, playlist_id_found, log_callback=self._log_youtube_upload)
+                            self.youtube_service.add_to_playlist(service, uploaded_video_id_final, playlist_id_found, log_callback=self._log_youtube_upload)
                         else:
                             self._log_youtube_upload(f"⚠️ Không tìm thấy ID cho danh sách phát '{playlist_name}', bỏ qua.")
                     else:
@@ -2240,7 +2245,7 @@ class SubtitleApp(ctk.CTk):
         # Cập nhật trạng thái task (bộ nhớ, không đụng UI)
         if task_id:
             try:
-                t = next((t for t in self.youtube_upload_queue if t.get('id') == task_id), None)
+                t = self.youtube_service.get_task_by_id(task_id)
                 if t:
                     t['status'] = 'Hoàn thành ✅' if success else 'Lỗi ❌'
                     t['video_id'] = video_id
@@ -2263,10 +2268,13 @@ class SubtitleApp(ctk.CTk):
             ui_alive = False
 
         def _update_and_proceed():
-            # Xóa task đã xong khỏi hàng đợi
+            # Xóa task đã xong khỏi hàng đợi (qua service)
             if task_id:
-                self.youtube_upload_queue = [t for t in self.youtube_upload_queue if t.get('id') != task_id]
-            self.youtube_currently_processing_task_id = None
+                self.youtube_service.remove_task_from_queue(task_id)
+            self.youtube_service.set_current_task(None)
+            
+            # Sync với Piu state
+            self.youtube_currently_processing_task_id = self.youtube_service.currently_processing_task_id
 
             # Cập nhật UI nếu còn, tránh TclError
             if ui_alive:
@@ -2278,7 +2286,7 @@ class SubtitleApp(ctk.CTk):
             # Tiến hành tác vụ tiếp theo / kết thúc
             try:
                 if not self.stop_event.is_set():
-                    if self.youtube_upload_queue:
+                    if self.youtube_service.queue:
                         self._process_next_youtube_task()
                     else:
                         self._on_youtube_batch_finished(stopped=False)
@@ -2305,16 +2313,12 @@ class SubtitleApp(ctk.CTk):
 #----------------------------------
     def _on_youtube_batch_finished(self, stopped=False):
         """Được gọi khi tất cả các tác vụ trong hàng chờ upload đã hoàn thành hoặc bị dừng."""
-        # Chặn gọi trùng
-        if getattr(self, "_yt_batch_finished_once", False):
-            logging.debug("[BatchFinished] Duplicate call ignored.")
-            return
-        self._yt_batch_finished_once = True
-
-        logging.info(f"--- KẾT THÚC UPLOAD HÀNG LOẠT (Bị dừng: {stopped}) ---")
-
-        self.is_uploading_youtube = False
-        self.youtube_currently_processing_task_id = None
+        # Hoàn thành batch qua service (service sẽ chặn duplicate calls)
+        self.youtube_service.finish_batch(stopped=stopped)
+        
+        # Sync với Piu state
+        self.is_uploading_youtube = self.youtube_service.is_uploading
+        self.youtube_currently_processing_task_id = self.youtube_service.currently_processing_task_id
         self.start_time = None
 
         # Progress bar/UI cleanup an toàn
@@ -2397,9 +2401,9 @@ class SubtitleApp(ctk.CTk):
                 upload_tab.youtube_start_upload_button.configure(state="disabled", text="🔒 Kích hoạt (Upload)")
             else:
                 # Chỉ bật khi hàng chờ có tác vụ
-                if getattr(self, "youtube_upload_queue", None):
+                if getattr(self, "youtube_service", None) and self.youtube_service.queue:
                     try:
-                        qlen = len(self.youtube_upload_queue)
+                        qlen = len(self.youtube_service.queue)
                     except Exception:
                         qlen = 0
                     upload_tab.youtube_start_upload_button.configure(state="normal", text=f"📤 Bắt đầu Upload ({qlen} video)")
@@ -2708,7 +2712,8 @@ class SubtitleApp(ctk.CTk):
                 return
 
             # --- CẬP NHẬT LOCATORS: THÊM ID CHO LINK VIDEO ---
-            YOUTUBE_LOCATORS = {
+            # Use YOUTUBE_LOCATORS from service
+            YOUTUBE_LOCATORS = self.youtube_service.get_youtube_locators() or {
                 # --- Các locators không đổi ---
                 "title": (By.XPATH, "//div[@aria-label='Thêm tiêu đề để mô tả video của bạn (nhập ký tự @ để đề cập tên một kênh)' or @aria-label='Add a title that describes your video (type @ to mention a channel)']"),
                 "description": (By.XPATH, "//div[@aria-label='Giới thiệu về video của bạn cho người xem (nhập ký tự @ để đề cập tên một kênh)' or @aria-label='Tell viewers about your video (type @ to mention a channel)']"),
@@ -3581,10 +3586,6 @@ class SubtitleApp(ctk.CTk):
         # 1. Lấy và xác thực thông tin
         video_path = self.youtube_video_path_var.get().strip()
         title = self.youtube_title_var.get().strip()
-
-        if len(title) > 100:
-            title = title[:100] # Cắt bớt tiêu đề nếu dài hơn 100 ký tự
-            logging.warning(f"[YouTubeQueue] Tiêu đề quá dài, đã được tự động cắt còn 100 ký tự: '{title}'")  
         
         if not video_path or not os.path.exists(video_path):
             messagebox.showwarning("Thiếu Video", "Vui lòng chọn một file video hợp lệ.", parent=self)
@@ -3593,25 +3594,19 @@ class SubtitleApp(ctk.CTk):
             messagebox.showwarning("Thiếu Tiêu đề", "Vui lòng nhập tiêu đề cho video.", parent=self)
             return
 
-        # 2. Tạo một dictionary cho tác vụ
-        task_data = {
-            "id": str(uuid.uuid4()),
-            "video_path": video_path,
-            "title": title,
-            "description": self._get_youtube_description(),
-            "tags_str": self.youtube_tags_var.get().strip(),
-            "playlist_name": self.youtube_playlist_var.get().strip(),
-            "thumbnail_path": self.youtube_thumbnail_path_var.get().strip(),
-            "privacy_status": self.youtube_privacy_status_var.get(),
-            "category_id": self.youtube_category_id_var.get(),
-            "status": "Chờ xử lý"
-        }
+        # 2. Thêm vào hàng chờ qua YouTubeService
+        task_data = self.youtube_service.add_task_to_queue(
+            video_path=video_path,
+            title=title,
+            description=self._get_youtube_description(),
+            tags_str=self.youtube_tags_var.get().strip(),
+            playlist_name=self.youtube_playlist_var.get().strip(),
+            thumbnail_path=self.youtube_thumbnail_path_var.get().strip(),
+            privacy_status=self.youtube_privacy_status_var.get(),
+            category_id=self.youtube_category_id_var.get()
+        )
         
-        # 3. Thêm vào hàng chờ và cập nhật UI
-        self.youtube_upload_queue.append(task_data)
-        logging.info(f"{log_prefix} Đã thêm tác vụ '{title}' vào hàng chờ. Tổng số: {len(self.youtube_upload_queue)}")
-        
-        # 4. Reset các ô nhập liệu để chuẩn bị cho tác vụ tiếp theo
+        # 3. Reset các ô nhập liệu để chuẩn bị cho tác vụ tiếp theo
         self.youtube_video_path_var.set("")
         self.youtube_title_var.set("")
         self.youtube_thumbnail_path_var.set("")
@@ -3636,10 +3631,9 @@ class SubtitleApp(ctk.CTk):
             if widget.winfo_exists(): # Thêm kiểm tra cho từng widget con nữa cho an toàn
                 widget.destroy()
 
-        # Lấy tác vụ đang xử lý để hiển thị riêng
-        processing_task = None
-        if self.youtube_currently_processing_task_id:
-            processing_task = next((t for t in self.youtube_upload_queue if t.get('id') == self.youtube_currently_processing_task_id), None)
+        # Lấy tác vụ đang xử lý để hiển thị riêng (từ service)
+        self.youtube_currently_processing_task_id = self.youtube_service.currently_processing_task_id
+        processing_task = self.youtube_service.get_current_task()
         
         # Hiển thị tác vụ đang xử lý
         if processing_task:
@@ -3657,8 +3651,8 @@ class SubtitleApp(ctk.CTk):
             Tooltip(label_widget, text=processing_task['title'])
             # <<< KẾT THÚC CẬP NHẬT >>>
 
-        # Hiển thị các tác vụ đang chờ
-        waiting_tasks = [task for task in self.youtube_upload_queue if task.get('id') != self.youtube_currently_processing_task_id]
+        # Hiển thị các tác vụ đang chờ (từ service)
+        waiting_tasks = self.youtube_service.get_waiting_tasks()
 
         if not waiting_tasks and not processing_task:
             ctk.CTkLabel(queue_widget, text="[Hàng chờ upload trống]", font=("Segoe UI", 11), text_color="gray").pack(pady=20)
@@ -3705,12 +3699,10 @@ class SubtitleApp(ctk.CTk):
             messagebox.showwarning("Đang xử lý", "Không thể xóa tác vụ khi đang upload.", parent=self)
             return
 
-        initial_len = len(self.youtube_upload_queue)
-        # Tạo một danh sách mới không chứa tác vụ cần xóa
-        self.youtube_upload_queue = [task for task in self.youtube_upload_queue if task.get('id') != task_id_to_remove]
+        # Xóa qua YouTubeService
+        removed = self.youtube_service.remove_task_from_queue(task_id_to_remove)
         
-        if len(self.youtube_upload_queue) < initial_len:
-            logging.info(f"Đã xóa tác vụ upload (ID: {task_id_to_remove}) khỏi hàng chờ.")
+        if removed:
             self.update_youtube_queue_display() # Cập nhật lại giao diện
             self.update_status("ℹ️ Đã xóa 1 tác vụ khỏi hàng chờ upload.")
 
@@ -3819,28 +3811,20 @@ class SubtitleApp(ctk.CTk):
             thumbnail_path = None
             playlist_name = None     # Không thêm vào playlist nào
 
-        # Kiểm tra và cắt bớt tiêu đề nếu cần
-        if len(video_title) > 100:
-            video_title = video_title[:100]
-            logging.warning(f"[_add_completed_video_to_upload_queue] Tiêu đề từ metadata/filename quá dài, đã cắt còn 100 ký tự: '{video_title}'")
-
-        # 3. Tạo tác vụ upload với thông tin đã lấy được
-        upload_task = {
-            "id": str(uuid.uuid4()),
-            "video_path": final_video_path,
-            "title": video_title,
-            "description": video_description,
-            "tags_str": video_tags,
-            "thumbnail_path": thumbnail_path,
-            "playlist_name": playlist_name,
-            "privacy_status": self.youtube_privacy_status_var.get(), # Lấy từ UI
-            "category_id": self.youtube_category_id_var.get(), # Lấy từ UI
-            "status": "Chờ xử lý"
-        }
+        # 3. Thêm vào hàng chờ qua YouTubeService (đảm bảo consistency và logic validation)
+        # YouTubeService sẽ tự động truncate title nếu > 100 chars và tạo UUID
+        task_data = self.youtube_service.add_task_to_queue(
+            video_path=final_video_path,
+            title=video_title,
+            description=video_description or "",
+            tags_str=video_tags or "",
+            playlist_name=playlist_name or "",
+            thumbnail_path=thumbnail_path or "",
+            privacy_status=self.youtube_privacy_status_var.get(),
+            category_id=self.youtube_category_id_var.get()
+        )
         
-        # Thêm vào hàng chờ và cập nhật UI
-        self.youtube_upload_queue.append(upload_task)
-        logging.info(f"{log_prefix} Đã thêm tác vụ '{video_title}' vào hàng chờ upload.")
+        logging.info(f"{log_prefix} Đã thêm tác vụ '{task_data.get('title', video_title)}' vào hàng chờ upload.")
         
         # Gọi cập nhật UI trên luồng chính
         self.after(0, self.update_youtube_queue_display)
@@ -5034,20 +5018,31 @@ class SubtitleApp(ctk.CTk):
             import tkinter as tk
             popup = tk.Toplevel(self)
             popup.configure(bg=self._apply_appearance_mode(ctk.ThemeManager.theme["CTkFrame"]["fg_color"]))
-
-            popup.title(title)
             popup.iconbitmap(resource_path("logo_Piu.ico"))
             
-            popup.attributes("-topmost", True)
-            popup.transient(self)
+            setup_popup_window(
+                popup=popup,
+                master=self,
+                width=400,
+                height=150,
+                title=title,
+                resizable=False,
+                topmost=True,
+                grab_set=False,
+                transient=True
+            )
             
-            screen_width = self.winfo_screenwidth()
-            screen_height = self.winfo_screenheight()
-            popup_width = 400
-            popup_height = 150
-            x = screen_width - popup_width - 20
-            y = screen_height - popup_height - 90 
-            popup.geometry(f"{popup_width}x{popup_height}+{x}+{y}")
+            # Position at bottom-right corner (non-blocking error popup)
+            try:
+                screen_width = self.winfo_screenwidth()
+                screen_height = self.winfo_screenheight()
+                popup_width = 400
+                popup_height = 150
+                x = screen_width - popup_width - 20
+                y = screen_height - popup_height - 90
+                popup.geometry(f"{popup_width}x{popup_height}+{x}+{y}")
+            except Exception as e:
+                logging.warning(f"Không thể position popup lỗi: {e}")
 
             main_frame = ctk.CTkFrame(popup)
             main_frame.pack(expand=True, fill="both", padx=10, pady=10)
@@ -5230,16 +5225,17 @@ class SubtitleApp(ctk.CTk):
         self._ai_edit_popup_active = True
         
         popup_context_title = 'Phụ Đề' if context == 'subtitle' else 'Thuyết Minh'
-        popup.title(f"✨ AI Xử Lý Kịch Bản ({popup_context_title})")
-        popup.geometry("620x650") 
-        popup.resizable(False, False)
-        popup.attributes("-topmost", True)
-        popup.grab_set()
-
-        try:
-            popup.after(50, lambda: popup.geometry(f"+{self.winfo_x() + (self.winfo_width() // 2) - (popup.winfo_width() // 2)}+{self.winfo_y() + (self.winfo_height() // 2) - (popup.winfo_height() // 2)}"))
-        except Exception as e_center:
-            logging.warning(f"{log_popup_prefix} Không thể căn giữa popup: {e_center}")
+        setup_popup_window(
+            popup=popup,
+            master=self,
+            width=620,
+            height=650,
+            title=f"✨ AI Xử Lý Kịch Bản ({popup_context_title})",
+            resizable=False,
+            topmost=True,
+            grab_set=True
+        )
+        center_popup_on_master(popup=popup, master=self, width=620, height=650, delay_ms=50)
 
         popup_main_frame = ctk.CTkFrame(popup, fg_color="transparent")
         popup_main_frame.pack(expand=True, fill="both", padx=15, pady=15)
@@ -10781,19 +10777,17 @@ class SubtitleApp(ctk.CTk):
         try:
             popup = ctk.CTkToplevel(self)
             self.shutdown_popup = popup # Lưu tham chiếu
-            popup.title("⏰ Hẹn giờ tắt máy")
-            popup.geometry("350x150")
-            popup.resizable(False, False)
-            popup.attributes("-topmost", True) # Luôn hiển thị trên cùng
-
-            # Căn giữa popup (tùy chọn)
-            try:
-                self.update_idletasks()
-                popup.update_idletasks()
-                x = self.winfo_x() + (self.winfo_width() // 2) - (350 // 2)
-                y = self.winfo_y() + (self.winfo_height() // 2) - (150 // 2)
-                popup.geometry(f"+{x}+{y}")
-            except Exception: pass
+            setup_popup_window(
+                popup=popup,
+                master=self,
+                width=350,
+                height=150,
+                title="⏰ Hẹn giờ tắt máy",
+                resizable=False,
+                topmost=True,
+                grab_set=False
+            )
+            center_popup_on_master(popup=popup, master=self, width=350, height=150, delay_ms=50)
 
             # Nội dung popup
             label = ctk.CTkLabel(popup,
@@ -16249,22 +16243,17 @@ class SubtitleApp(ctk.CTk):
         try:
             popup = ctk.CTkToplevel(self)
             self.update_popup = popup
-            popup.title("🔔 Có Cập nhật Mới!")
-            # Có thể tăng chiều cao một chút nếu cần thêm không gian cho nút lớn hơn
-            popup.geometry("460x370")
-            popup.resizable(False, False)
-            popup.attributes("-topmost", True)
-            popup.grab_set()
-
-            # --- Căn giữa popup ---
-            try:
-                self.update_idletasks(); popup.update_idletasks()
-                main_x, main_y = self.winfo_x(), self.winfo_y()
-                main_w, main_h = self.winfo_width(), self.winfo_height()
-                popup_w, popup_h = 460, 370 # Sử dụng kích thước mới nếu thay đổi geometry
-                x = main_x + (main_w // 2) - (popup_w // 2); y = main_y + (main_h // 2) - (popup_h // 2)
-                popup.geometry(f"{popup_w}x{popup_h}+{x}+{y}")
-            except Exception as e: logging.warning(f"Không thể căn giữa popup cập nhật: {e}")
+            setup_popup_window(
+                popup=popup,
+                master=self,
+                width=460,
+                height=370,
+                title="🔔 Có Cập nhật Mới!",
+                resizable=False,
+                topmost=True,
+                grab_set=True
+            )
+            center_popup_on_master(popup=popup, master=self, width=460, height=370, delay_ms=50)
 
             # --- Bố cục nội dung dùng pack ---
             main_frame = ctk.CTkFrame(popup, fg_color="transparent")
@@ -17106,22 +17095,20 @@ class SubtitleApp(ctk.CTk):
         import tkinter as tk # Cần import tkinter
         popup = tk.Toplevel(self)
         popup.configure(bg=self._apply_appearance_mode(ctk.ThemeManager.theme["CTkFrame"]["fg_color"])) # Lấy màu nền của theme
-
-        popup.title("Nút X đã được nhấn...!")
         popup.iconbitmap(resource_path("logo_Piu.ico")) # Icon sẽ hoạt động ổn định
-        popup.transient(self)
-        popup.grab_set()
-        popup.resizable(False, False)
-
-        try:
-            self.update_idletasks()
-            popup_width = 350
-            popup_height = 145
-            x = self.winfo_x() + (self.winfo_width() // 2) - (popup_width // 2)
-            y = self.winfo_y() + (self.winfo_height() // 2) - (popup_height // 2)
-            popup.geometry(f"{popup_width}x{popup_height}+{x}+{y}")
-        except Exception as e:
-            logging.warning(f"Không thể căn giữa popup xác nhận đóng: {e}")
+        
+        setup_popup_window(
+            popup=popup,
+            master=self,
+            width=350,
+            height=145,
+            title="Nút X đã được nhấn...!",
+            resizable=False,
+            topmost=False,  # tk.Toplevel may not support topmost
+            grab_set=True,
+            transient=True
+        )
+        center_popup_on_master(popup=popup, master=self, width=350, height=145, delay_ms=50)
 
         # --- Nội dung của popup (vẫn dùng widget của customtkinter) ---
         main_frame = ctk.CTkFrame(popup, fg_color="transparent")
@@ -22154,7 +22141,7 @@ class SubtitleApp(ctk.CTk):
                 self.placeholder_dub_queue.destroy()
             self.placeholder_dub_queue = ctk.CTkLabel(queue_widget, text="[Hàng chờ thuyết minh trống]",
                                                       font=("Segoe UI", 11), text_color="gray")
-            self.placeholder_dub_queue.pack(pady=20, anchor="center")
+            self.placeholder_dub_queue.pack(pady=20)
         else:
             if hasattr(self, 'placeholder_dub_queue') and self.placeholder_dub_queue.winfo_exists():
                 self.placeholder_dub_queue.destroy()
@@ -22981,16 +22968,21 @@ class SubtitleApp(ctk.CTk):
 
         self._script_prompt_slideshow_win = ctk.CTkToplevel(self)
         win = self._script_prompt_slideshow_win
-        win.title("Yêu cầu Kịch bản/Audio cho Slideshow")
         
         # Đặt kích thước ban đầu (có thể sẽ được điều chỉnh sau khi pack widget)
         initial_popup_width = 520
         initial_popup_height = 250 # Tăng nhẹ nếu cần
-        win.geometry(f"{initial_popup_width}x{initial_popup_height}")
         
-        win.resizable(False, False)
-        win.attributes("-topmost", True)
-        win.grab_set() # Ngăn tương tác với cửa sổ chính
+        setup_popup_window(
+            popup=win,
+            master=self,
+            width=initial_popup_width,
+            height=initial_popup_height,
+            title="Yêu cầu Kịch bản/Audio cho Slideshow",
+            resizable=False,
+            topmost=True,
+            grab_set=True
+        )
 
         # --- Frame và các widget con ---
         main_prompt_frame = ctk.CTkFrame(win, fg_color="transparent")
@@ -23077,47 +23069,7 @@ class SubtitleApp(ctk.CTk):
         win.protocol("WM_DELETE_WINDOW", _on_cancel_prompt)
 
         # --- Căn giữa cửa sổ popup ---
-        # Gọi update_idletasks để đảm bảo các widget đã được tính toán kích thước
-        self.update_idletasks() # Cửa sổ chính
-        win.update_idletasks()   # Cửa sổ popup
-
-        try:
-            main_app_x = self.winfo_x()
-            main_app_y = self.winfo_y()
-            main_app_width = self.winfo_width()
-            main_app_height = self.winfo_height()
-            
-            # Lấy kích thước thực tế của popup sau khi đã pack widget
-            popup_width = win.winfo_width()
-            popup_height = win.winfo_height()
-
-            # Fallback nếu winfo_width/height chưa cập nhật (đôi khi xảy ra)
-            if popup_width <= 1: popup_width = initial_popup_width 
-            if popup_height <= 1: popup_height = initial_popup_height
-            
-            # Tính toán vị trí để căn giữa
-            position_x = main_app_x + (main_app_width // 2) - (popup_width // 2)
-            position_y = main_app_y + (main_app_height // 2) - (popup_height // 2)
-            
-            # Đảm bảo popup không bị ra ngoài màn hình (đặc biệt quan trọng với đa màn hình hoặc cửa sổ chính ở rìa)
-            screen_width = win.winfo_screenwidth()
-            screen_height = win.winfo_screenheight()
-            
-            if position_x + popup_width > screen_width:
-                position_x = screen_width - popup_width
-            if position_y + popup_height > screen_height:
-                position_y = screen_height - popup_height
-            if position_x < 0:
-                position_x = 0
-            if position_y < 0:
-                position_y = 0
-                
-            win.geometry(f"{popup_width}x{popup_height}+{position_x}+{position_y}")
-            logging.info(f"[PromptScriptSlideshow] Đã căn giữa popup tại: {position_x}, {position_y} với kích thước {popup_width}x{popup_height}")
-
-        except Exception as e_center_final:
-            logging.warning(f"[PromptScriptSlideshow] Không thể căn giữa cửa sổ popup (lỗi cuối): {e_center_final}")
-            # Nếu lỗi, ít nhất nó sẽ xuất hiện ở vị trí mặc định gần cửa sổ chính
+        center_popup_on_master(popup=win, master=self, width=initial_popup_width, height=initial_popup_height, delay_ms=50)
 
         
 # Trong lớp SubtitleApp:
@@ -29764,28 +29716,9 @@ class SubtitleApp(ctk.CTk):
 
 # SubtitleStyleSettingsWindow class - MOVED TO ui/popups/subtitle_style_settings.py
 
-# =====================================================================================================================================
-# LỚP CỬA SỔ CÀI ĐẶT TẠO ẢNH IMAGEN (MỚI)
-# =====================================================================================================================================
-# ImagenSettingsWindow class removed - moved to ui/popups/imagen_settings.py
-
-# =======================================================================================================================================================================
-
-# DalleSettingsWindow class removed - moved to ui/popups/dalle_settings.py
-
-# MetadataManagerWindow class removed - moved to ui/popups/metadata_manager.py
-
-# =====================================================================================================================================
-# LỚP CỬA SỔ CÀI ĐẶT TẠO ẢNH IMAGEN (MỚI)
-# =====================================================================================================================================
-# ImagenSettingsWindow class removed - moved to ui/popups/imagen_settings.py
-
-# =======================================================================================================================================================================
-
-# DalleSettingsWindow class removed - moved to ui/popups/dalle_settings.py
-
-# MetadataManagerWindow class removed - moved to ui/popups/metadata_manager.py 
-
+        # Note: ImagenSettingsWindow, DalleSettingsWindow, MetadataManagerWindow classes 
+        # have been moved to ui/popups/ - imported above
+        
         google_select_button = ctk.CTkButton(google_frame, text="Chọn File JSON...", width=120, command=self._select_google_key_file)
         # Đặt nút chọn file vào cột 2, hàng 1
         google_select_button.grid(row=1, column=2, padx=(0, 10), pady=(2, 5), sticky="e") 
@@ -30133,19 +30066,6 @@ class SubtitleApp(ctk.CTk):
         except Exception as e:
             logging.error(f"Lỗi khi gọi save_current_config: {e}")
             return
-# =====================================================================================================================================
-# LỚP CỬA SỔ CÀI ĐẶT TẠO ẢNH IMAGEN (MỚI)
-# =====================================================================================================================================
-# ImagenSettingsWindow class removed - moved to ui/popups/imagen_settings.py
-
-# =======================================================================================================================================================================
-
-# DalleSettingsWindow class removed - moved to ui/popups/dalle_settings.py
-
-# MetadataManagerWindow class removed - moved to ui/popups/metadata_manager.py
-
-
-
 # ==========================
 # SECTION 5: Khối Thực thi Chính
 # ==========================

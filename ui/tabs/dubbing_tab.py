@@ -882,7 +882,7 @@ class DubbingTab(ctk.CTkFrame):
 
         self.dub_queue_display_frame = ctk.CTkScrollableFrame(dub_right_panel, label_text="📋 Hàng chờ Thuyết minh", label_font=("Poppins", 14, "bold"), height=180)
         self.dub_queue_display_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 5))
-        self.placeholder_dub_queue = ctk.CTkLabel(self.dub_queue_display_frame, text="[Hàng chờ thuyết minh sẽ hiển thị ở đây]", text_color=("gray30", "gray70"))
+        self.placeholder_dub_queue = ctk.CTkLabel(self.dub_queue_display_frame, text="[Hàng chờ thuyết minh sẽ hiển thị ở đây]", font=("Segoe UI", 11), text_color="gray")
         self.placeholder_dub_queue.pack(pady=20)
 
         dub_script_preview_frame = ctk.CTkFrame(dub_right_panel, fg_color="transparent")

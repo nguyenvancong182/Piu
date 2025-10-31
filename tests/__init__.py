@@ -1,4 +1,6 @@
 """
-Tests package - Unit and integration tests for Piu application.
-"""
+Tests for Piu Application
 
+This package contains all test modules for the Piu application.
+Tests are organized by type: unit, integration, and e2e.
+"""

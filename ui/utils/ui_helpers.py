@@ -7,6 +7,7 @@ These are utility functions for checking UI state and safely calling UI methods.
 import logging
 import threading
 import os
+import customtkinter as ctk
 
 
 def is_ui_alive(app_instance) -> bool:
@@ -150,3 +151,115 @@ def ready_msg_for_view(view: str) -> str:
         "✍ AI Biên Tập": "✅ AI Biên Tập: Sẵn sàng biên tập Kịch Bản.",
     }
     return ready_map.get(view, "✅ Sẵn sàng!")
+
+
+def setup_popup_window(
+    popup,
+    master,
+    width: int,
+    height: int,
+    title: str = "",
+    resizable: bool = False,
+    topmost: bool = True,
+    grab_set: bool = True,
+    transient: bool = False
+):
+    """
+    Setup common popup window properties.
+    
+    Args:
+        popup: The popup window (ctk.CTkToplevel or tk.Toplevel)
+        master: Master window instance
+        width: Popup width
+        height: Popup height
+        title: Window title (optional)
+        resizable: Whether window is resizable (default: False)
+        topmost: Whether window stays on top (default: True)
+        grab_set: Whether to grab focus (default: True)
+        transient: Whether window is transient to master (default: False)
+    """
+    if title:
+        popup.title(title)
+    
+    popup.geometry(f"{width}x{height}")
+    popup.resizable(resizable, resizable)
+    
+    if topmost:
+        popup.attributes("-topmost", True)
+    
+    if grab_set:
+        popup.grab_set()
+    
+    if transient:
+        popup.transient(master)
+
+
+def center_popup_on_master(popup, master, width: int, height: int, delay_ms: int = 50):
+    """
+    Center popup window on master window with screen bounds checking.
+    
+    Args:
+        popup: The popup window
+        master: Master window instance
+        width: Popup width
+        height: Popup height
+        delay_ms: Delay before centering (to allow geometry to be set, default: 50ms)
+        
+    Returns:
+        True if centering was scheduled, False otherwise
+    """
+    def _center():
+        try:
+            master.update_idletasks()
+            popup.update_idletasks()
+            
+            master_x = master.winfo_x()
+            master_y = master.winfo_y()
+            master_width = master.winfo_width()
+            master_height = master.winfo_height()
+            
+            # Use actual popup size if available, otherwise use desired size
+            popup_width_actual = popup.winfo_width()
+            popup_height_actual = popup.winfo_height()
+            
+            final_width = width if popup_width_actual <= 1 else popup_width_actual
+            final_height = height if popup_height_actual <= 1 else popup_height_actual
+            
+            # Calculate center position
+            center_x = master_x + (master_width // 2) - (final_width // 2)
+            center_y = master_y + (master_height // 2) - (final_height // 2)
+            
+            # Check screen bounds
+            screen_width = popup.winfo_screenwidth()
+            screen_height = popup.winfo_screenheight()
+            
+            if center_x + final_width > screen_width:
+                center_x = screen_width - final_width
+            if center_y + final_height > screen_height:
+                center_y = screen_height - final_height
+            if center_x < 0:
+                center_x = 0
+            if center_y < 0:
+                center_y = 0
+            
+            popup.geometry(f"{final_width}x{final_height}+{int(center_x)}+{int(center_y)}")
+            
+        except Exception as e:
+            logging.warning(f"Không thể căn giữa popup: {e}")
+            # Fallback: use desired geometry
+            try:
+                popup.geometry(f"{width}x{height}")
+            except Exception:
+                pass
+    
+    try:
+        if hasattr(popup, 'after'):
+            popup.after(delay_ms, _center)
+        else:
+            # If no after method, call immediately
+            _center()
+        return True
+    except Exception as e:
+        logging.warning(f"Không thể schedule centering: {e}")
+        _center()
+        return False
