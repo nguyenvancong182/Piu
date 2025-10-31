@@ -86,6 +86,10 @@ from services.licensing_service import verify_status as licensing_verify_status,
 from services.ffmpeg_service import run_ffmpeg_command as ffmpeg_run_command
 from services.download_service import stream_process_output as ytdlp_stream_output
 from services.update_service import is_newer as is_newer_version
+from services.ai_service import AIService
+from services.image_service import ImageService
+from services.model_service import ModelService
+from services.metadata_service import MetadataService
 
 # --- Thêm các import cho Google Sheets API ---
 import os.path # Dùng để làm việc với đường dẫn file token/credentials
@@ -520,6 +524,13 @@ class SubtitleApp(ctk.CTk):
 
         # --- Cấu hình ---
         self.cfg = load_config()
+        
+        # --- Services ---
+        # Khởi tạo AI Service
+        self.ai_service = AIService(logger=self.logger)
+        self.image_service = ImageService(logger=self.logger)
+        self.model_service = ModelService(logger=self.logger)
+        self.metadata_service = MetadataService(logger=self.logger)
 
         # Chủ động lấy và lưu HWID ngay lập tức để tránh race condition.
         try:
@@ -3848,32 +3859,33 @@ class SubtitleApp(ctk.CTk):
 
 # Tải dữ liệu từ file master_metadata.json cuối cùng được sử dụng vào bộ nhớ đệm
     def _load_master_metadata_cache(self):
-        """Tải dữ liệu từ file master_metadata.json cuối cùng được sử dụng vào bộ nhớ đệm."""
+        """
+        [REFACTORED] Tải dữ liệu từ file master_metadata.json cuối cùng được sử dụng vào bộ nhớ đệm.
+        Sử dụng MetadataService để xử lý business logic, chỉ xử lý UI callbacks ở đây.
+        """
         log_prefix = "[MetadataCache]"
         # Lấy đường dẫn file đã lưu từ config
         last_metadata_path = self.cfg.get('last_master_metadata_path')
 
         if not last_metadata_path or not os.path.exists(last_metadata_path):
             logging.info(f"{log_prefix} Không có file master metadata nào được cấu hình hoặc file không tồn tại.")
-            self.master_metadata_cache = {} # Đảm bảo cache rỗng
+            # Đồng bộ state với MetadataService
+            self.master_metadata_cache = {}
+            self.metadata_service.cache = {}
             return
 
-        try:
-            with open(last_metadata_path, 'r', encoding='utf-8') as f:
-                self.master_metadata_cache = json.load(f)
-            logging.info(f"{log_prefix} Đã tải thành công {len(self.master_metadata_cache)} mục từ '{os.path.basename(last_metadata_path)}' vào cache.")
+        # Gọi MetadataService để load cache
+        success = self.metadata_service.load_cache(cache_path=last_metadata_path)
         
-        except (json.JSONDecodeError, TypeError) as e:
-            logging.error(f"{log_prefix} Lỗi khi đọc hoặc phân tích file JSON metadata: {e}")
-            self.master_metadata_cache = {} # Reset cache nếu lỗi
+        # Đồng bộ state với Piu.py
+        self.master_metadata_cache = self.metadata_service.cache
+        
+        if not success:
             # Thông báo cho người dùng một cách an toàn trên luồng chính
             self.after(0, lambda: messagebox.showwarning("Lỗi Tải Metadata",
-                                   f"Không thể tải file master metadata tại:\n{last_metadata_path}\n\nLỗi: {e}\n\n"
+                                   f"Không thể tải file master metadata tại:\n{last_metadata_path}\n\n"
                                    "Tính năng tự động điền thông tin upload sẽ không hoạt động.",
                                    parent=self))
-        except Exception as e:
-            logging.error(f"{log_prefix} Lỗi không mong muốn khi tải file metadata: {e}", exc_info=True)
-            self.master_metadata_cache = {}
 
 
 # Hàm Xử lý khi một trong các checkbox metadata được nhấn,
@@ -3901,45 +3913,53 @@ class SubtitleApp(ctk.CTk):
 # Tự động điền các trường thông tin YouTube dựa trên checkbox nào đang được bật.
     def _autofill_youtube_fields(self):
         """
-        Tự động điền các trường thông tin YouTube dựa trên checkbox nào đang được bật.
-        Ưu tiên "Lấy metadata" trước, sau đó mới đến "Lấy theo tên file".
+        [REFACTORED] Tự động điền các trường thông tin YouTube dựa trên checkbox nào đang được bật.
+        Sử dụng MetadataService để xử lý business logic, chỉ xử lý UI callbacks ở đây.
         """
         video_path = self.youtube_video_path_var.get()
         if not video_path or not os.path.exists(video_path):
             return # Không làm gì nếu chưa có video được chọn
 
+        # Đồng bộ state từ Piu.py sang MetadataService
+        self.metadata_service.cache = self.master_metadata_cache if hasattr(self, 'master_metadata_cache') else {}
+
         # Ưu tiên 1: Lấy từ Master Metadata
         if self.youtube_fetch_metadata_var.get():
-            identifier = get_identifier_from_source(video_path)
-            logging.info(f"Đang tìm metadata cho key: '{identifier}'")
-
-            if hasattr(self, 'master_metadata_cache') and identifier in self.master_metadata_cache:
-                metadata = self.master_metadata_cache[identifier]
+            # Gọi MetadataService để autofill
+            filled_fields = self.metadata_service.autofill_youtube_fields(file_path=video_path)
+            
+            if filled_fields.get('title') or filled_fields.get('description') or filled_fields.get('tags'):
+                # Có metadata - điền vào UI
+                self.youtube_title_var.set(filled_fields.get('title', ''))
+                self.youtube_tags_var.set(filled_fields.get('tags', ''))
+                self.youtube_playlist_var.set(filled_fields.get('playlist', ''))
+                self.youtube_thumbnail_path_var.set(filled_fields.get('thumbnail', ''))
                 
-                self.youtube_title_var.set(metadata.get('title', ''))
-                self.youtube_tags_var.set(metadata.get('tags', ''))
-                self.youtube_playlist_var.set(metadata.get('playlist', ''))
-                self.youtube_thumbnail_path_var.set(metadata.get('thumbnail', ''))
-                
-                self.youtube_description_textbox.delete("1.0", "end")
-                self.youtube_description_textbox.insert("1.0", metadata.get('description', ''))
+                if hasattr(self, 'youtube_description_textbox') and self.youtube_description_textbox and self.youtube_description_textbox.winfo_exists():
+                    self.youtube_description_textbox.delete("1.0", "end")
+                    self.youtube_description_textbox.insert("1.0", filled_fields.get('description', ''))
                 
                 # Cập nhật label hiển thị thumbnail
-                thumb_path = self.youtube_thumbnail_path_var.get()
-                if thumb_path and os.path.exists(thumb_path):
-                    self.youtube_thumbnail_path_display_label.configure(text=os.path.basename(thumb_path), text_color=("gray10", "lightgreen"))
-                else:
-                    self.youtube_thumbnail_path_display_label.configure(text="(Chưa có ảnh trong metadata)", text_color=("gray30", "gray70"))
+                thumb_path = filled_fields.get('thumbnail', '')
+                if hasattr(self, 'youtube_thumbnail_path_display_label') and self.youtube_thumbnail_path_display_label and self.youtube_thumbnail_path_display_label.winfo_exists():
+                    if thumb_path and os.path.exists(thumb_path):
+                        self.youtube_thumbnail_path_display_label.configure(text=os.path.basename(thumb_path), text_color=("gray10", "lightgreen"))
+                    else:
+                        self.youtube_thumbnail_path_display_label.configure(text="(Chưa có ảnh trong metadata)", text_color=("gray30", "gray70"))
 
+                identifier = get_identifier_from_source(video_path)
                 self.update_status(f"✅ Đã tự động điền thông tin từ Master Metadata cho '{identifier}'.")
-                logging.info(f"Đã áp dụng thành công metadata cho key '{identifier}'.")
+                logging.info(f"[Autofill] Đã áp dụng thành công metadata cho key '{identifier}'.")
             else:
+                # Không tìm thấy metadata
+                identifier = get_identifier_from_source(video_path)
                 self.update_status(f"⚠️ Không tìm thấy metadata cho '{identifier}'.")
-                logging.warning(f"Không tìm thấy metadata cho key '{identifier}' trong cache.")
+                logging.warning(f"[Autofill] Không tìm thấy metadata cho key '{identifier}' trong cache.")
 
         # Ưu tiên 2: Lấy theo tên file (chỉ chạy nếu ưu tiên 1 không được chọn)
         elif self.youtube_autofill_var.get():
-            default_title = os.path.splitext(os.path.basename(video_path))[0]
+            # Gọi MetadataService để lấy title từ filename
+            default_title = self.metadata_service.get_title_from_filename(video_path)
             self.youtube_title_var.set(default_title)
             self.update_status("✅ Đã tự động điền tiêu đề từ tên file.")
 
@@ -4272,69 +4292,22 @@ class SubtitleApp(ctk.CTk):
     # HÀM HELPER CHO METADATA
     def _update_metadata_cache_entry(self, key, title, base_thumbnail_for_increment=None):
         """
-        (PHIÊN BẢN NÂNG CẤP CHO CHUỖI AI)
-        Cập nhật cache, ưu tiên tăng số từ `base_thumbnail_for_increment` nếu được cung cấp.
-        Nếu không, sẽ fallback về việc lấy mẫu từ mục đầu tiên trong cache.
+        [REFACTORED] Cập nhật cache, ưu tiên tăng số từ `base_thumbnail_for_increment` nếu được cung cấp.
+        Sử dụng MetadataService để xử lý business logic, chỉ xử lý UI callbacks ở đây.
         """
         if not hasattr(self, 'master_metadata_cache'):
             self.master_metadata_cache = {}
         
+        # Đồng bộ state từ Piu.py sang MetadataService
+        self.metadata_service.cache = self.master_metadata_cache
+        
+        # Lấy các thông tin từ UI (fallback nếu cache rỗng)
         template_description = ""
         template_tags = ""
         template_playlist = ""
-        template_thumbnail = ""
-        source_of_template = "Không xác định"
-
-        ### BẮT ĐẦU THAY ĐỔI ###
         
-        # ƯU TIÊN 1: Tăng số từ thumbnail cơ sở được cung cấp (nếu có và checkbox được bật)
-        if self.metadata_auto_increment_thumb_var.get() and base_thumbnail_for_increment:
-            logging.info(f"[MetadataUpdate] Đang thử tăng số thumbnail từ cơ sở: '{base_thumbnail_for_increment}'")
-            source_of_template = f"Tăng dần từ '{os.path.basename(base_thumbnail_for_increment)}'"
-            try:
-                dir_name = os.path.dirname(base_thumbnail_for_increment)
-                base_name = os.path.basename(base_thumbnail_for_increment)
-                filename_no_ext, ext = os.path.splitext(base_name)
-
-                match_thumb = re.search(r'(\d+)(?!.*\d)', filename_no_ext) # Tìm số cuối cùng trong tên file
-
-                if match_thumb:
-                    number_str = match_thumb.group(1)
-                    original_length = len(number_str)
-                    number = int(number_str)
-                    new_number = number + 1
-                    
-                    start, end = match_thumb.span(1)
-                    new_filename_no_ext = filename_no_ext[:start] + str(new_number).zfill(original_length) + filename_no_ext[end:]
-                    
-                    new_base_name = new_filename_no_ext + ext
-                    template_thumbnail = os.path.join(dir_name, new_base_name)
-                    logging.info(f"Đã tự động tăng thumbnail thành công: '{template_thumbnail}'")
-                else:
-                    template_thumbnail = base_thumbnail_for_increment # Giữ nguyên nếu không tìm thấy số
-                    logging.warning(f"Không tìm thấy số để tăng trong tên thumbnail cơ sở: '{base_name}'")
-            except Exception as e_thumb:
-                logging.error(f"Lỗi khi xử lý tăng số thumbnail: {e_thumb}")
-                template_thumbnail = base_thumbnail_for_increment # Giữ nguyên nếu lỗi
-        
-        # ƯU TIÊN 2: Lấy mẫu từ mục đầu tiên trong cache (logic cũ)
-        # Chỉ chạy nếu ưu tiên 1 không thành công (template_thumbnail vẫn rỗng)
-        if not template_thumbnail:
-            try:
-                if self.master_metadata_cache and isinstance(self.master_metadata_cache, dict):
-                    first_key = next(iter(self.master_metadata_cache))
-                    template_data = self.master_metadata_cache[first_key]
-                    template_thumbnail = template_data.get("thumbnail", "")
-                    source_of_template = f"Mục đầu tiên (key: '{first_key}') từ Master Metadata cache"
-                else:
-                    raise ValueError("Cache metadata rỗng hoặc không phải dictionary.")
-            except Exception:
-                source_of_template = "Giao diện Tab Upload YT (Fallback cuối cùng)"
-        
-        # ƯU TIÊN 3: Lấy các thông tin còn lại từ mẫu đã tìm được hoặc từ UI
         try:
-            # Lấy description, tags, playlist từ MỘT nguồn duy nhất để nhất quán
-            # Ưu tiên mẫu từ cache trước
+            # Ưu tiên lấy từ cache trước
             if self.master_metadata_cache and isinstance(self.master_metadata_cache, dict):
                 first_key = next(iter(self.master_metadata_cache))
                 template_data = self.master_metadata_cache[first_key]
@@ -4342,37 +4315,56 @@ class SubtitleApp(ctk.CTk):
                 template_tags = template_data.get("tags", "")
                 template_playlist = template_data.get("playlist", "")
             else: # Fallback về UI
-                template_description = self.youtube_description_textbox.get("1.0", "end-1c").strip()
-                template_tags = self.youtube_tags_var.get().strip()
-                template_playlist = self.youtube_playlist_var.get().strip()
+                if hasattr(self, 'youtube_description_textbox') and self.youtube_description_textbox and self.youtube_description_textbox.winfo_exists():
+                    template_description = self.youtube_description_textbox.get("1.0", "end-1c").strip()
+                if hasattr(self, 'youtube_tags_var'):
+                    template_tags = self.youtube_tags_var.get().strip()
+                if hasattr(self, 'youtube_playlist_var'):
+                    template_playlist = self.youtube_playlist_var.get().strip()
         except Exception as e_get_template:
-            logging.warning(f"Không thể lấy mẫu description/tags/playlist: {e_get_template}")
+            logging.warning(f"[MetadataUpdate] Không thể lấy mẫu description/tags/playlist: {e_get_template}")
 
-        ### KẾT THÚC THAY ĐỔI ###
-
-        # Tạo mục metadata mới với đầy đủ thông tin đã lấy
-        self.master_metadata_cache[key] = {
-            "title": title,
-            "description": template_description,
-            "tags": template_tags,
-            "thumbnail": template_thumbnail,
-            "playlist": template_playlist
-        }
-        logging.info(f"[MetadataUpdate] Đã cập nhật/thêm key '{key}' (Nguồn mẫu: {source_of_template})")
+        # Gọi MetadataService để update metadata
+        auto_increment_thumb = hasattr(self, 'metadata_auto_increment_thumb_var') and self.metadata_auto_increment_thumb_var.get()
+        
+        success = self.metadata_service.update_metadata(
+            key=key,
+            title=title,
+            description=template_description,
+            tags=template_tags,
+            thumbnail="",  # Will be determined by service
+            playlist=template_playlist,
+            base_thumbnail_for_increment=base_thumbnail_for_increment,
+            auto_increment_thumb=auto_increment_thumb
+        )
+        
+        # Đồng bộ state từ MetadataService về Piu.py
+        self.master_metadata_cache = self.metadata_service.cache
+        
+        if success:
+            logging.info(f"[MetadataUpdate] Đã cập nhật/thêm key '{key}'")
+        else:
+            logging.error(f"[MetadataUpdate] Lỗi khi cập nhật metadata cho key '{key}'")
 
     # HÀM HELPER CHO METADATA
     def _save_master_metadata_cache(self):
-        """Lưu master_metadata_cache hiện tại ra file JSON."""
+        """
+        [REFACTORED] Lưu master_metadata_cache hiện tại ra file JSON.
+        Sử dụng MetadataService để xử lý business logic.
+        """
         save_path = self.cfg.get('last_master_metadata_path')
         if not save_path:
             logging.warning("[MetadataSave] Không có đường dẫn file master metadata để lưu. Bỏ qua.")
             return
-        try:
-            with open(save_path, 'w', encoding='utf-8') as f:
-                json.dump(self.master_metadata_cache, f, ensure_ascii=False, indent=2)
-            logging.info(f"Đã lưu thành công {len(self.master_metadata_cache)} mục vào file master metadata: {save_path}")
-        except Exception as e:
-            logging.error(f"Lỗi khi lưu file master metadata: {e}", exc_info=True)
+        
+        # Đồng bộ state từ Piu.py sang MetadataService trước khi save
+        self.metadata_service.cache = self.master_metadata_cache
+        
+        # Gọi MetadataService để save cache
+        success = self.metadata_service.save_cache(cache_path=save_path)
+        
+        if not success:
+            logging.error(f"[MetadataSave] Lỗi khi lưu file master metadata: {save_path}", exc_info=True)
 
 
 #------------------------------------------------------------------------------
@@ -4462,77 +4454,43 @@ class SubtitleApp(ctk.CTk):
                                                     trigger_imagen_chain_flag, trigger_dub_chain_flag, character_sheet_text,
                                                     base_filename_for_chain): # <<< THÊM VÀO ĐÂY
         """
-        (ĐÃ CẬP NHẬT) (Worker) Tách lời thoại, gọi API Gemini, và truyền dữ liệu nhân vật đi tiếp.
+        [REFACTORED] (Worker) Tách lời thoại, gọi API Gemini, và truyền dữ liệu nhân vật đi tiếp.
+        Sử dụng AIService để xử lý business logic, chỉ xử lý UI callbacks ở đây.
         """
-        # GỌI API GEMINI ---
-        import google.generativeai as genai
-        from google.api_core import exceptions as google_exceptions
-
-        log_prefix = f"[GeminiChainExec_v2:{context}]" # Tăng version log
+        log_prefix = f"[GeminiChainExec_v2:{context}]"
         logging.info(f"{log_prefix} Bắt đầu xử lý kịch bản với Gemini...")
 
-        processed_script = None
-        error_message = None
-        
+        # Lấy API key
+        gemini_api_key = self.gemini_key_var.get()
+        if not gemini_api_key:
+            error_message = "Lỗi: Vui lòng nhập Gemini API Key trong Cài đặt."
+            self.after(0, self._handle_gemini_script_editing_result_for_chain,
+                      None, error_message, target_widget, context,
+                      trigger_imagen_chain_flag, trigger_dub_chain_flag,
+                      selected_model, script_content, character_sheet_text,
+                      base_filename_for_chain)
+            return
+
+        # Gọi AI Service để xử lý (SRT extraction đã được xử lý trong AIService)
         try:
-            # --- BƯỚC 1: KIỂM TRA VÀ CHUẨN BỊ VĂN BẢN GỬI CHO AI ---
-            # Kiểm tra xem văn bản đầu vào có phải là định dạng SRT không
-            is_input_srt = re.match(r"^\d+\s*[\r\n]+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->", script_content.strip(), re.MULTILINE) is not None
-            text_to_send_to_ai = script_content # Mặc định
-
-            if is_input_srt:
-                logging.info(f"{log_prefix} Input là SRT. Đang trích xuất lời thoại thuần túy để gửi cho AI...")
-                # Sử dụng hàm có sẵn để lấy chỉ phần text, bỏ qua index và timing
-                text_to_send_to_ai = extract_dialogue_from_srt_string(script_content)
+            processed_script, error_message = self.ai_service.process_script_with_gemini(
+                script_content=script_content,
+                user_instruction=user_instruction,
+                api_key=gemini_api_key,
+                model_name=selected_model,
+                stop_event=lambda: self.stop_event.is_set(),
+                max_retries=2,  # Chain có thể cần retry nhanh hơn
+                retry_delay_seconds=15
+            )
             
-            # --- BƯỚC 2: XÂY DỰNG PROMPT ---
-            action_type = "tạo mới" if not script_content else "biên tập"
-            prompt_parts = [
-                f"Bạn là một trợ lý AI chuyên {action_type} kịch bản cho video. Hãy thực hiện yêu cầu sau: '{user_instruction}'.",
-                "Xin hãy giữ lại cấu trúc và số lượng dòng của văn bản gốc nếu có thể.",
-                "QUAN TRỌNG: Chỉ trả về DUY NHẤT nội dung kịch bản đã xử lý, không thêm bất kỳ lời dẫn, giải thích hay định dạng markdown nào."
-            ]
-            if text_to_send_to_ai: # Chỉ thêm phần này nếu có text để gửi đi
-                prompt_parts.append(f"\nNội dung kịch bản gốc để biên tập:\n---\n{text_to_send_to_ai}\n---")
-            
-            final_prompt = "\n".join(prompt_parts)
-            # KIỂM TRA DỪNG TRƯỚC KHI GỌI API >>>
-            if self.stop_event.is_set():
-                raise InterruptedError("Dừng bởi người dùng trước khi gọi API Gemini tạo kịch bản.")
-
-            gemini_api_key = self.gemini_key_var.get()
-            if not gemini_api_key:
-                raise ValueError("Lỗi: Vui lòng nhập Gemini API Key trong Cài đặt.")
-
-            genai.configure(api_key=gemini_api_key)
-            logging.info(f"{log_prefix} Sử dụng model: {selected_model}")
-            model = genai.GenerativeModel(selected_model) 
-
-            logging.info(f"{log_prefix} Đang gửi yêu cầu đến Gemini...")
-            response = model.generate_content(final_prompt)
-
-            if not response.candidates:
-                block_reason = response.prompt_feedback.block_reason.name if response.prompt_feedback else "Không rõ"
-                raise RuntimeError(f"Yêu cầu đã bị chặn bởi bộ lọc an toàn của Gemini (Lý do: {block_reason}).")
-
-            processed_script = response.text
-            self._track_api_call(service_name="gemini_calls", units=1)
-            logging.info(f"{log_prefix} Gemini đã xử lý thành công.")
-
-        except google_exceptions.PermissionDenied as e: 
-            error_message = f"Lỗi xác thực Gemini: API Key không đúng hoặc không có quyền. Chi tiết: {e}"
-            logging.error(f"{log_prefix} {error_message}")
-        except ValueError as ve:
-            error_message = str(ve)
-            logging.error(f"{log_prefix} {error_message}")
-
-        except InterruptedError as ie: 
-            error_message = f"Đã dừng bởi người dùng: {ie}"
-            logging.warning(f"{log_prefix} {error_message}")
+            # Track API call nếu thành công
+            if processed_script:
+                self._track_api_call(service_name="gemini_calls", units=1)
 
         except Exception as e:
-            error_message = f"Lỗi khi gọi API Gemini: {type(e).__name__} - {e}"
+            error_message = f"Lỗi nghiêm trọng khi sử dụng AI Service: {type(e).__name__} - {e}"
             logging.error(f"{log_prefix} {error_message}", exc_info=True)
+            processed_script = None
             
         # --- BƯỚC 3: GỌI HÀM HANDLER VÀ TRUYỀN `character_sheet_text` ĐI TIẾP ---
         self.after(0, self._handle_gemini_script_editing_result_for_chain,
@@ -4728,307 +4686,68 @@ class SubtitleApp(ctk.CTk):
     def _execute_gemini_scene_division_thread(self, script_content, formatted_srt_for_slideshow, num_images, selected_model, target_widget, context, trigger_dub_chain_flag, character_sheet_text,
                                               base_filename_for_chain, auto_split_scenes):
         """
-        (PHIÊN BẢN 13 - TÍCH HỢP GIỚI HẠN THỜI GIAN)
-        Yêu cầu Gemini phân tích kịch bản, tạo prompt JSON và tuân thủ giới hạn thời gian tối thiểu cho mỗi cảnh.
+        [REFACTORED] Yêu cầu Gemini phân tích kịch bản, tạo prompt JSON và tuân thủ giới hạn thời gian tối thiểu cho mỗi cảnh.
+        Sử dụng AIService để xử lý business logic, chỉ xử lý UI callbacks ở đây.
         """
         worker_log_prefix = f"[{threading.current_thread().name}_GeminiSceneDivision_v13_TimeLimit]"
         logging.info(f"{worker_log_prefix} Bắt đầu chia kịch bản và tạo {num_images} cặp scene/prompt.")
 
-        gemini_response_text = None
-        error_message = None
-        
-        max_retries = 2
-        initial_retry_delay_s = 15.0
+        # Lấy API key
+        gemini_api_key = self.gemini_key_var.get()
+        if not gemini_api_key:
+            error_message = "Lỗi: Vui lòng nhập Gemini API Key trong Cài đặt."
+            self.after(0, self._handle_gemini_scene_division_result,
+                      None, error_message, formatted_srt_for_slideshow, script_content,
+                      target_widget, context, trigger_dub_chain_flag, base_filename_for_chain)
+            return
 
-        for attempt in range(max_retries + 1):
-            if self.stop_event.is_set():
-                error_message = "Đã dừng bởi người dùng trước khi gọi API Gemini chia cảnh."
-                logging.warning(f"{worker_log_prefix} {error_message}")
+        # Lấy các config parameters
+        saved_style_name = self.cfg.get("imagen_last_style", "Mặc định (AI tự do)")
+        style_prompt_fragment = None
+        try:
+            from ui.popups.imagen_settings import ImagenSettingsWindow
+            style_prompt_fragment = ImagenSettingsWindow.IMAGEN_ART_STYLES.get(saved_style_name, "")
+        except:
+            style_prompt_fragment = ""
+
+        # Tính toán min_duration_seconds từ UI
+        min_duration_seconds = 0
+        min_duration_setting = self.imagen_min_scene_duration_var.get()
+        duration_map = {"15 giây": 15, "30 giây": 30, "1 phút": 60, "2 phút": 120, "3 phút": 180}
+        for key, value in duration_map.items():
+            if key in min_duration_setting:
+                min_duration_seconds = value
                 break
-
-            try:
-                import google.generativeai as genai
-                from google.api_core import exceptions as google_exceptions
-                from google.genai.types import HarmCategory, HarmBlockThreshold
-
-                # === THAY ĐỔI QUAN TRỌNG: GỌI HÀM LÀM SẠCH KỊCH BẢN ===
-                sanitized_script_for_ai = sanitize_script_for_ai(script_content, self.cfg)
-                # =======================================================
-
-                genai.configure(api_key=self.gemini_key_var.get())
-                model = genai.GenerativeModel(selected_model)
-
-                # --- Phần xử lý "Dàn diễn viên" và xây dựng prompt giữ nguyên như cũ ---
-                natural_language_character_sheet = ""
-                use_character_sheet = self.cfg.get("imagen_use_character_sheet", False)
-                if use_character_sheet and character_sheet_text:
-                    source_of_cached_sheet = self.cfg.get("imagen_source_of_cached_sheet", None)
-                    cached_optimized_sheet = self.cfg.get("imagen_cached_optimized_sheet", None)
-                    if character_sheet_text == source_of_cached_sheet and cached_optimized_sheet:
-                        natural_language_character_sheet = cached_optimized_sheet
-                        logging.info(f"{worker_log_prefix} HIT CACHE: Dàn diễn viên không đổi. Sử dụng phiên bản đã tối ưu từ cache.")
-                    else:
-                        logging.info(f"{worker_log_prefix} MISS CACHE: Dàn diễn viên đã thay đổi. Bắt đầu tối ưu hóa bằng AI...")
-                        summarization_prompt = (
-                            "You are a helpful assistant. Below is a character sheet written with image generation keywords. "
-                            "Your task is to convert it into a natural language description, focusing only on visual appearance. "
-                            "Maintain the 'Alias: Description' format. Respond only with the converted text.\n\n"
-                            f"--- ORIGINAL SHEET ---\n{character_sheet_text}\n--- CONVERTED NATURAL LANGUAGE DESCRIPTION ---"
-                        )
-                        summarization_response = model.generate_content(summarization_prompt)
-                        if not summarization_response.candidates:
-                            natural_language_character_sheet = character_sheet_text
-                            logging.warning(f"{worker_log_prefix} Yêu cầu tối ưu 'Dàn diễn viên' bị chặn. Dùng bản gốc.")
-                        else:
-                            natural_language_character_sheet = summarization_response.text.strip()
-                            logging.info(f"{worker_log_prefix} KẾT QUẢ TỐI ƯU:\n--- DÀN DIỄN VIÊN (ĐÃ TỐI ƯU) ---\n{natural_language_character_sheet}\n---------------------------------")
-                            self.cfg["imagen_source_of_cached_sheet"] = character_sheet_text
-                            self.cfg["imagen_cached_optimized_sheet"] = natural_language_character_sheet
-                            self.after(0, self.save_current_config)
                 
-                saved_style_name = self.cfg.get("imagen_last_style", "Mặc định (AI tự do)")
-                style_prompt_fragment = ImagenSettingsWindow.IMAGEN_ART_STYLES.get(saved_style_name, "")
-                character_instruction_block = ""
-                if natural_language_character_sheet:
-                    character_instruction_block = (
-                        "\n\n**CHARACTER DESCRIPTIONS (HIGHEST PRIORITY):**\n"
-                        "If a character from this list appears in a scene, you MUST use their description to create a consistent visual representation.\n"
-                        f"--- CHARACTER SHEET ---\n{natural_language_character_sheet}\n--- END CHARACTER SHEET ---\n"
-                    )
-                style_instruction_block = (
-                    "\n\n**ART STYLE INSTRUCTIONS:**\n"
-                    f"The final image prompts MUST strictly follow the user's chosen art style: '{saved_style_name}'. "
-                    f"Incorporate these keywords and concepts: '{style_prompt_fragment}'.\n"
-                    "If the style is 'Mặc định (AI tự do)', you MUST prioritize photorealistic, highly detailed, cinematic 3D renders."
-                )
-                # THÊM HƯỚNG DẪN AN TOÀN 
-                # Đặt ngay đầu system message để có độ ưu tiên cao nhất
-                safety_instruction_block = (
-                    "**CRITICAL SAFETY MANDATE (HIGHEST PRIORITY):**\n"
-                    "You are a safety-conscious assistant. Your absolute primary goal is to generate text that is 100% safe for Google's most restrictive safety filters. "
-                    "All output MUST be SFW (Safe-for-Work).\n\n"
-                    "**FORBIDDEN CONTENT IN OUTPUT 'image_prompt':**\n"
-                    "- **ABSOLUTELY NO** direct descriptions of violence, gore, blood, or death.\n"
-                    "- **ABSOLUTELY NO** weapons (swords, knives, guns, bows), especially not in a threatening pose or during use. If a weapon is essential, describe it neutrally and statically (e.g., 'a decorative sword hanging on a wall', 'a sheathed katana at a warrior's hip').\n"
-                    "- **ABSOLUTELY NO** sexually suggestive content, nudity, or hateful imagery.\n\n"
-                    "**SAFE REPHRASING STRATEGY:**\n"
-                    "When you encounter a sensitive scene in the script (e.g., a fight, an injury), you MUST NOT describe it literally. Instead, you MUST rephrase it using one of these safe methods:\n"
-                    "1.  **Focus on Emotion & Aftermath:** Describe the character's facial expression (anger, determination, sadness) or the scene after the conflict is over.\n"
-                    "    * *Instead of:* 'A man stabs another.'\n"
-                    "    * *Use:* 'Close-up on a man's face, filled with anguish and regret, a single tear rolling down his cheek. The background is dark and somber.'\n"
-                    "2.  **Use Symbolism & Metaphor:** Represent the conflict with symbolic imagery.\n"
-                    "    * *Instead of:* 'Two armies clash with swords.'\n"
-                    "    * *Use:* 'A split screen showing two opposing house crests, a fiery red lion and an icy blue wolf, with storm clouds gathering between them.'\n"
-                    "3.  **Focus on Tension & Environment:** Describe the moment *before* the action, emphasizing the tension.\n"
-                    "    * *Instead of:* 'He draws his sword to fight.'\n"
-                    "    * *Use:* 'A warrior's hand rests on the hilt of his sheathed sword, knuckles white. The air is thick with tension under a stormy sky.'\n"
-                )
-
-                ### BẮT ĐẦU THÊM: Xử lý giới hạn thời gian ###
-
-                min_duration_instruction = ""
-                # 1. Đọc cài đặt từ UI
-                min_duration_setting = self.imagen_min_scene_duration_var.get()
-                
-                # 2. Chuyển đổi sang giây
-                duration_map = { "15 giây": 15, "30 giây": 30, "1 phút": 60, "2 phút": 120, "3 phút": 180 }
-                min_duration_seconds = 0
-                for key, value in duration_map.items():
-                    if key in min_duration_setting:
-                        min_duration_seconds = value
-                        break
-                
-                # 3. Chỉ thêm vào prompt nếu có giới hạn được chọn
-                if min_duration_seconds > 0:
-                    # Tính tổng thời lượng kịch bản gốc
-                    total_duration_ms = 0
-                    original_timed_segments = self._parse_plain_text_to_srt_data(formatted_srt_for_slideshow)
-                    if original_timed_segments:
-                        total_duration_ms = original_timed_segments[-1]['end_ms'] - original_timed_segments[0]['start_ms']
-                    
-                    if total_duration_ms > 0:
-                        total_duration_seconds = total_duration_ms / 1000.0
-                        logging.info(f"{worker_log_prefix} Áp dụng giới hạn thời gian: Tối thiểu {min_duration_seconds}s/cảnh. Tổng thời lượng kịch bản: {total_duration_seconds:.2f}s.")
-                        estimated_scene_count = max(1, int(total_duration_seconds / min_duration_seconds))                        
-
-                        # 4. Tạo chỉ dẫn cho prompt
-                        # Khởi tạo các biến để xây dựng prompt
-                        main_task_description = ""
-                        final_instruction = ""
-                        duration_rules_block = "" # Chỉ thêm khối này khi cần
-
-                        # KỊCH BẢN 1: CÓ GIỚI HẠN THỜI LƯỢỢNG (ƯU TIÊN TUYỆT ĐỐI)
-                        if min_duration_seconds > 0 and total_duration_seconds > 0:
-
-                            # === TÍNH TOÁN KHOẢNG GỢI Ý SÁNG TẠO MỞ RỘNG ===
-                            base_upper_bound = max(1, int(total_duration_seconds / min_duration_seconds))
-                            lower_bound_scenes = max(1, int(base_upper_bound * 0.5)) # Nới lỏng cận dưới xuống 50%
-                            creative_upper_bound = max(base_upper_bound, int(base_upper_bound * 1.25)) # Cho phép cận trên sáng tạo cao hơn 25%
-                            # ===============================================
-
-                            # 1. Mô tả nhiệm vụ chính - Nhấn mạnh sự sáng tạo và bối cảnh
-                            main_task_description = (
-                                "You are a creative script analyst and director's assistant. You are processing a single, **continuous, and coherent narrative**. "
-                                "Your primary task is to read this script and divide it into meaningful visual scenes. Your decisions must maintain character and story consistency across all scenes. "
-                                "You must follow one strict rule, but otherwise have complete creative freedom to ensure the best narrative pacing."
-                            )
-
-                            # 2. Xây dựng khối quy tắc chi tiết về thời lượng (PHIÊN BẢN SÁNG TẠO & LINH HOẠT NHẤT)
-                            duration_rules_block = (
-                                "\n\n**CRITICAL DURATION AND SCENE DIVISION RULES:**\n"
-                                f"1.  **The Hard Rule (Non-Negotiable):** Each 'scene_script' MUST represent a segment of AT LEAST **{min_duration_seconds} seconds**. This is your only strict constraint.\n"
-                                f"2.  **Creative Guideline (For Reference Only):** Based on the script's length ({total_duration_seconds:.0f} seconds), similar projects often result in **{lower_bound_scenes} to {creative_upper_bound}** scenes. Consider this a general observation, NOT a target you must hit.\n"
-                                "3.  **Your Director's Judgment (Highest Priority):** Your main goal is to serve the story's rhythm and emotional impact. You have full authority to determine the final number of scenes. If the story is best told with **more scenes** than the guideline (e.g., 8, 9, or more), you are encouraged to do so, provided each scene respects the Hard Rule. If the story flows better with fewer, longer scenes, that is also a valid creative choice. **The final decision is yours.**"
-                            )
-
-                            # 3. Chỉ dẫn cuối cùng - Nhắc lại sự cân bằng giữa quy tắc và sáng tạo
-                            final_instruction = (
-                                "Generate the JSON output. Strictly follow the minimum duration rule. "
-                                "Use your creative judgment to select the best number of scenes for optimal storytelling, using the provided range as a creative guideline. Remember to maintain narrative consistency throughout."
-                            )
-
-                        # KỊCH BẢN 2: KHÔNG CÓ GIỚI HẠN THỜI LƯỢỢNG (DÙNG LOGIC SỐ LƯỢNG ẢNH)
-                        else:
-                            if auto_split_scenes:
-                                # 1. Mô tả nhiệm vụ chính TẬP TRUNG vào việc tự động chia
-                                main_task_description = (
-                                    "You are an expert script analyst... You are processing a single, **continuous, and coherent narrative**. Your primary task is to read this script and divide it into the most important visual scenes that capture the story's essence. "
-                                    f"The number of scenes should be appropriate for the script's content, but MUST NOT EXCEED {num_images} scenes."
-                                )
-                                # 2. Chỉ dẫn cuối cùng
-                                final_instruction = f"Generate the JSON output, dividing the script into a suitable number of scenes (up to a maximum of {num_images}). Remember to maintain narrative consistency throughout."
-                            else:
-                                # 1. Mô tả nhiệm vụ chính TẬP TRUNG vào số lượng ảnh chính xác
-                                main_task_description = (
-                                    "You are an expert script analyst... You are processing a single, **continuous, and coherent narrative**. Your primary task is to read this script and divide it into "
-                                    f"EXACTLY {num_images} key visual scenes."
-                                )
-                                # 2. Chỉ dẫn cuối cùng
-                                final_instruction = f"Generate the JSON output, dividing the script into exactly {num_images} scenes. Remember to maintain narrative consistency throughout."
-
-                            # Khối quy tắc thời lượng sẽ rỗng trong trường hợp này
-                            duration_rules_block = ""
-
-                        # --- Xây dựng System Message cuối cùng ---
-                        system_message_content = (
-                            f"{main_task_description}"
-                            f"{safety_instruction_block}"
-                            f"{character_instruction_block}"
-                            f"{style_instruction_block}"
-                            f"{duration_rules_block}" # Sẽ rỗng nếu không có giới hạn thời gian
-                            "\n\n**OUTPUT FORMAT (CRITICAL):**\n"
-                            "- You MUST respond with a valid JSON array of objects. NO OTHER TEXT OR EXPLANATIONS.\n"
-                            "- Each object in the array represents one scene and MUST have two keys: 'scene_script' and 'image_prompt'.\n"
-                            "- The 'scene_script' value MUST be the EXACT, UNMODIFIED text segment from the original script that corresponds to the scene.\n"
-                            "- The 'image_prompt' value MUST be the concise, high-quality, safe-for-work image prompt in ENGLISH for that scene.\n"
-                            "- All image prompts must adhere to the art style instructions."
-                        )
-
-                        # --- Xây dựng User Message cuối cùng ---
-                        user_message_content = (
-                            "Here is an example of the required JSON output format.\n"
-                            "SCRIPT INPUT:\n'Tiêu Viêm mỉm cười, nhìn về phía góc chợ. Ở đó, một cô gái thanh tú trong bộ váy xanh đang đứng đợi. Cô gái mỉm cười đáp lại.'\n"
-                            "EXPECTED JSON OUTPUT:\n"
-                            "[\n"
-                            "  {\n"
-                            '    "scene_script": "Tiêu Viêm mỉm cười, nhìn về phía góc chợ. Ở đó, một cô gái thanh tú trong bộ váy xanh đang đứng đợi.",\n'
-                            '    "image_prompt": "3D animation, ancient Chinese style. In a bustling marketplace, a handsome young man in a black robe named Tiêu Viêm smiles warmly as he looks towards a graceful girl in a green dress. cinematic lighting, rendered in Unreal Engine 5, text-free."\n'
-                            "  },\n"
-                            "  {\n"
-                            '    "scene_script": "Cô gái mỉm cười đáp lại.",\n'
-                            '    "image_prompt": "Close-up shot, 3D animation, ancient Chinese style. The graceful girl in the green dress smiles back, her eyes sparkling. soft lighting, detailed facial expression, text-free."\n'
-                            "  }\n"
-                            "]\n\n"
-                            "--- END OF EXAMPLE ---\n\n"
-                            "Now, process the following script based on ALL my instructions.\n"
-                            f"SCRIPT:\n\n{script_content}\n\n"
-                            f"{final_instruction}" # <-- SỬ DỤNG BIẾN final_instruction ĐÃ ĐƯỢC TẠO
-                        )
-
-                        final_prompt_for_gemini = f"{system_message_content}\n\n{user_message_content}"                
-
-                safety_settings = {
-                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE, # Giữ nguyên
-                    # Nới lỏng cài đặt này để cho phép các mô tả có tính "nguy hiểm" nhẹ đi qua
-                    # VÍ DỤ: mô tả một trận chiến không có máu me.
-                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_ONLY_HIGH, 
-                }
-                
-                logging.info(f"{worker_log_prefix} (Thử lần {attempt + 1}/{max_retries + 1}) Gọi API model '{selected_model}'...")
-                response = model.generate_content(
-                    final_prompt_for_gemini,
-                    safety_settings=safety_settings
-                )
-
-                if self.stop_event.is_set():
-                    raise InterruptedError("Dừng bởi người dùng sau khi API Gemini chia cảnh hoàn tất.")
-
-                gemini_response_text = None # Khởi tạo biến
-
-                # Kiểm tra an toàn xem response có nội dung hay không
-                if response.parts:
-                    # Nếu có, lấy nội dung một cách an toàn
-                    gemini_response_text = response.text.strip()
-                    self._track_api_call(service_name="gemini_calls", units=1)
-                    if not gemini_response_text:
-                        error_message = "Gemini trả về nội dung rỗng."
-                    error_message = None # Thành công, reset lỗi
-                    break # Thoát khỏi vòng lặp retry (nếu có)
-                else:
-                    # Nếu không có 'parts', nghĩa là đã bị chặn hoặc có lỗi
-                    block_reason = "Không rõ"
-                    # Cố gắng lấy lý do chặn cụ thể từ prompt_feedback
-                    if hasattr(response, 'prompt_feedback') and hasattr(response.prompt_feedback, 'block_reason') and response.prompt_feedback.block_reason:
-                        block_reason = response.prompt_feedback.block_reason.name
-                    
-                    # Ném ra một lỗi Runtime rõ ràng để khối "except Exception as e:" bên ngoài bắt được
-                    raise RuntimeError(f"Yêu cầu bị chặn bởi bộ lọc an toàn của Gemini (Lý do: {block_reason}).")
-
-            except (google_api_exceptions.ResourceExhausted, google_api_exceptions.ServiceUnavailable, google_api_exceptions.DeadlineExceeded, google_api_exceptions.InternalServerError) as e:
-                # <<< BẮT CÁC LỖI CÓ THỂ THỬ LẠI (PHIÊN BẢN SỬA LỖI TREO) >>>
-                logging.warning(f"{worker_log_prefix} (Thử lần {attempt + 1}) Gặp lỗi có thể thử lại ({type(e).__name__}). Chờ {initial_retry_delay_s:.1f}s...")
-                error_message = f"Lỗi tạm thời từ Google API: {type(e).__name__}."
-                if attempt < max_retries:
-                    # 1. Tạo một Event để luồng nền chờ
-                    retry_event = threading.Event()
-
-                    # 2. Yêu cầu luồng chính đặt hẹn giờ và set Event sau khi hết giờ
-                    def _schedule_retry():
-                        self.update_status(f"💎 Gemini: Gặp lỗi tạm thời. Thử lại sau {initial_retry_delay_s:.1f}s...")
-                        # Dùng after() để không chặn luồng chính
-                        self.after(int(initial_retry_delay_s * 1000), retry_event.set)
-                    
-                    self.after(0, _schedule_retry)
-
-                    # 3. Luồng nền sẽ đợi ở đây cho đến khi luồng chính gọi retry_event.set()
-                    logging.info(f"{worker_log_prefix} Luồng nền đang chờ tín hiệu retry từ luồng chính...")
-                    retry_event.wait() # Chờ tín hiệu
-                    logging.info(f"{worker_log_prefix} Đã nhận tín hiệu, tiếp tục thử lại.")
-                    
-                    continue # Thử lại vòng lặp for
-                else:
-                    logging.error(f"{worker_log_prefix} Vẫn gặp lỗi sau {max_retries + 1} lần thử. Bỏ qua.")
-                    break # Hết số lần thử, thoát vòng lặp
+        # Gọi AI Service để xử lý
+        try:
+            gemini_response_text, error_message = self.ai_service.divide_scene_with_gemini(
+                script_content=script_content,
+                num_images=num_images,
+                api_key=gemini_api_key,
+                model_name=selected_model,
+                character_sheet_text=character_sheet_text,
+                formatted_srt_for_timing=formatted_srt_for_slideshow,
+                min_scene_duration_seconds=min_duration_seconds,
+                auto_split_scenes=auto_split_scenes,
+                art_style_name=saved_style_name,
+                art_style_prompt=style_prompt_fragment,
+                cfg=self.cfg,
+                stop_event=lambda: self.stop_event.is_set(),
+                max_retries=2,
+                retry_delay_seconds=15.0
+            )
             
-            except (RuntimeError, google_exceptions.PermissionDenied, google_exceptions.InvalidArgument) as e:
-                # <<< BẮT CÁC LỖI KHÔNG THỂ THỬ LẠI >>>
-                error_message = f"Lỗi không thể thử lại khi dùng Gemini chia cảnh: {e}"
-                logging.error(f"{worker_log_prefix} {error_message}", exc_info=False) # Không cần full traceback cho lỗi đã biết
-                break # Thoát vòng lặp ngay lập tức
+            # Track API call nếu thành công
+            if gemini_response_text:
+                self._track_api_call(service_name="gemini_calls", units=1)
+                
+        except Exception as e:
+            error_message = f"Lỗi nghiêm trọng khi sử dụng AI Service: {type(e).__name__} - {e}"
+            logging.error(f"{worker_log_prefix} {error_message}", exc_info=True)
+            gemini_response_text = None
 
-            except InterruptedError as ie:
-                error_message = f"Đã dừng bởi người dùng: {ie}"
-                logging.warning(f"{worker_log_prefix} {error_message}")
-                break
-            except Exception as e:
-                error_message = f"Lỗi không mong muốn khi dùng Gemini chia cảnh: {e}"
-                logging.error(f"{worker_log_prefix} {error_message}", exc_info=True)
-                break
-        # <<< KẾT THÚC KHỐI LOGIC THỬ LẠI MỚI >>>
-
-        # Gọi hàm xử lý kết quả ở luồng chính (logic này không đổi)
+        # Gọi hàm xử lý kết quả ở luồng chính
         self.after(0, self._handle_gemini_scene_division_result,
                    gemini_response_text,
                    error_message,
@@ -5039,13 +4758,14 @@ class SubtitleApp(ctk.CTk):
                    trigger_dub_chain_flag,
                    base_filename_for_chain)
 
+    # ====================================================================
+    # CODE CŨ ĐÃ ĐƯỢC DI CHUYỂN SANG services/ai_service.py
+    # ====================================================================
+    # Tất cả logic xử lý Gemini scene division đã được refactor vào
+    # AIService.divide_scene_with_gemini()
+    # Giữ lại comment này để tham khảo trong tương lai nếu cần
+    # ====================================================================
 
-
-# _sanitize_script_for_ai function - MOVED to utils/helpers.py
-
-
-#-------------------------------------------------------------
-# <<<--- THÊM HÀM MỚI NÀY VÀO (BƯỚC 6A) ---<<<
     def _handle_gemini_scene_division_result(self, gemini_response_text, error_message,
                                              script_for_slideshow_timing, original_plain_text_for_dub,
                                              target_widget, context, trigger_dub_chain_flag,
@@ -5061,6 +4781,8 @@ class SubtitleApp(ctk.CTk):
             error_to_show = error_message or "Gemini không tạo được prompt ảnh nào."
             if self._is_in_any_batch_queue():
                 self._handle_batch_error_and_continue("Lỗi Chuỗi AI (Hàng loạt)", error_to_show)
+                return
+
             else:
                 self.is_gemini_processing = False
                 messagebox.showerror("Lỗi Gemini Chia Cảnh", f"Đã xảy ra lỗi:\n\n{error_to_show}", parent=self)
@@ -5240,168 +4962,50 @@ class SubtitleApp(ctk.CTk):
                                                    negative_prompt="",
                                                    output_dir_override=None):
         """
-        (PHIÊN BẢN 5 - LINH HOẠT KHI LỖI)
-        Lặp qua từng prompt, gọi API, thử lại khi gặp lỗi có thể phục hồi.
-        Nếu gặp lỗi không thể phục hồi cho một ảnh, sẽ ghi nhận và tiếp tục với ảnh tiếp theo.
-        Chỉ thất bại hoàn toàn nếu không tạo được ảnh nào.
+        [REFACTORED] Tạo ảnh Imagen từ danh sách prompts (chain generation).
+        Sử dụng ImageService để xử lý business logic, chỉ xử lý UI callbacks ở đây.
         """
-        worker_log_prefix = f"[ImagenChainWorker_v5_FlexibleError]"
-        all_saved_image_paths = []
-        error_occurred_during_generation = False
-        first_error_message_for_callback = None # <<< THAY ĐỔI: Chỉ lưu lỗi đầu tiên
+        worker_log_prefix = f"[ImagenChainWorker_v6_Refactored]"
+        
+        # Lấy API key
+        api_key = self.gemini_key_var.get()
+        if not api_key:
+            error_message = "Lỗi: Thiếu Gemini API Key (cần cho Imagen)."
+            self.after(0, self._handle_slideshow_creation_and_completion,
+                      [], script_for_slideshow_timing, original_plain_text_for_dub,
+                      output_folder, target_widget, context, trigger_dub_chain_flag,
+                      image_engine_name, ai_script_engine_name, base_filename_for_chain,
+                      error_message)
+            return
+        
+        # Chuẩn bị prompts với style và negative prompt
+        prepared_prompts = []
+        for p in prompts:
+            prompt_with_style = f"{p.strip()}, {style_prompt_fragment}" if style_prompt_fragment else p.strip()
+            prepared_prompts.append(prompt_with_style)
 
-        with keep_awake(f"Generating {len(prompts)} Imagen images"):
-            try:
-                from google.genai import Client, types
-                from google.api_core import exceptions as google_api_exceptions
-                from google.genai import errors as google_genai_errors
-
-                client = Client(api_key=self.gemini_key_var.get())
-                
-                max_retries_per_prompt = 2
-                initial_retry_delay_s = 5.0
-
-                for i, p in enumerate(prompts):
-                    if self.stop_event.is_set():
-                        if not first_error_message_for_callback: first_error_message_for_callback = "Đã dừng bởi người dùng khi đang tạo ảnh."
-                        error_occurred_during_generation = True
-                        break 
-
-                    self.after(0, lambda: self.update_status(f"🖼 {image_engine_name}: Đang chuẩn bị ảnh {i+1}/{len(prompts)}..."))
-
-                    # Ghép prompt chính với phong cách nghệ thuật
-                    prompt_with_style = f"{p.strip()}, {style_prompt_fragment}" if style_prompt_fragment else p.strip()
-
-                    # Chuẩn bị negative prompt cuối cùng
-                    default_negative_keywords = "text, words, letters, writing, typography, signs, banners, logos, watermark, signature, extra fingers, malformed hands, lowres, blurry"
-                    final_negative_prompt_str = default_negative_keywords
-                    if negative_prompt:
-                        final_negative_prompt_str = f"{negative_prompt}, {default_negative_keywords}"
-
-                    # Nối tất cả lại thành một prompt hoàn chỉnh cho API
-                    # Kỹ thuật dùng (without: ...) hoặc "negative prompt:" là cách phổ biến để hướng dẫn model
-                    final_prompt_for_api = f"{prompt_with_style} (without: {final_negative_prompt_str})"
-                    logging.info(f"{worker_log_prefix} Final prompt for image #{i+1}: {final_prompt_for_api}")
-                    
-                    current_retries = 0
-                    prompt_succeeded = False
-                    while current_retries <= max_retries_per_prompt and not prompt_succeeded:
-                        if self.stop_event.is_set():
-                            error_occurred_during_generation = True
-                            if not first_error_message_for_callback: first_error_message_for_callback = "Đã dừng bởi người dùng."
-                            break 
-                        
-                        try:
-                            log_attempt_msg = f"Gọi API cho ảnh {i+1}/{len(prompts)} (Thử lần {current_retries + 1})."
-                            logging.info(f"{worker_log_prefix} {log_attempt_msg}")
-                            
-                            response = client.models.generate_images(
-                                model='imagen-3.0-generate-002',
-                                prompt=final_prompt_for_api,
-                                config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio=aspect_ratio)
-                            )
-
-                            if self.stop_event.is_set():
-                                raise InterruptedError("Dừng bởi người dùng sau khi API Imagen tạo ảnh hoàn tất.")
-                            
-                            if not response.generated_images:
-                                reason = response.prompt_feedback.block_reason.name if hasattr(response, 'prompt_feedback') and hasattr(response.prompt_feedback, 'block_reason') else "Không rõ lý do."
-                                warning_msg = f"Prompt cho ảnh #{i+1} đã bị chặn bởi bộ lọc an toàn. Lý do: {reason}"
-                                logging.warning(f"{worker_log_prefix} {warning_msg}")
-                                self._show_non_blocking_error_popup(f"Lỗi Tạo Ảnh Imagen #{i+1}", f"Yêu cầu tạo ảnh của bạn đã bị bộ lọc an toàn của Google chặn.\n\nLý do: {reason}\n\nỨng dụng sẽ tiếp tục với các ảnh còn lại.")
-                                # Đánh dấu có lỗi nhưng không dừng toàn bộ
-                                error_occurred_during_generation = True
-                                if not first_error_message_for_callback: first_error_message_for_callback = warning_msg
-                                break # Thoát vòng lặp retry cho prompt này, chuyển sang prompt tiếp theo
-
-                            # Đếm số ảnh được tạo thành công trong lần gọi API này
-                            num_generated_images_this_call = len(response.generated_images)
-                            if num_generated_images_this_call > 0:
-                                self._track_api_call(service_name="imagen_images", units=num_generated_images_this_call)
-                                logging.info(f"{worker_log_prefix} Đã ghi nhận {num_generated_images_this_call} ảnh Imagen vào thống kê.")
-
-                            image_bytes = response.generated_images[0].image.image_bytes
-                            file_name = f"imagen_chain_{i:03d}_{uuid.uuid4().hex[:4]}.png"
-                            file_path = os.path.join(output_folder, file_name)
-                            with open(file_path, "wb") as f: f.write(image_bytes)
-                            all_saved_image_paths.append(file_path)
-                            prompt_succeeded = True
-                            time.sleep(1.2)
-
-                        except (google_api_exceptions.ResourceExhausted, google_api_exceptions.ServiceUnavailable, google_api_exceptions.InternalServerError, google_api_exceptions.DeadlineExceeded, google_genai_errors.ClientError) as e:
-                            is_retryable = False
-                            if isinstance(e, google_genai_errors.ClientError) and e.status_code == 499:
-                                is_retryable = True
-                            elif not isinstance(e, google_genai_errors.ClientError):
-                                is_retryable = True
-
-                            if is_retryable:
-                                logging.warning(f"{worker_log_prefix} Gặp lỗi có thể retry ({type(e).__name__}) cho ảnh {i+1}. Lỗi: {e}")
-                                current_retries += 1
-                                if current_retries > max_retries_per_prompt:
-                                    logging.error(f"{worker_log_prefix} Đã vượt quá số lần thử lại cho ảnh {i+1}. BỎ QUA ẢNH NÀY.")
-                                    
-                                    # Đoạn code mới bạn hỏi nằm ở đây
-                                    self._show_non_blocking_error_popup(
-                                        f"Lỗi Tạo Ảnh Imagen #{i+1}",
-                                        f"Gặp lỗi mạng hoặc server và đã thử lại {max_retries_per_prompt} lần không thành công.\n\nLỗi: {e}\n\nỨng dụng sẽ tiếp tục với các ảnh còn lại.",
-                                        failed_item_identifier=f"{base_filename_for_chain} (Ảnh #{i+1})"
-                                    )
-                                    if not first_error_message_for_callback: first_error_message_for_callback = f"Lỗi không thể phục hồi cho ảnh #{i+1}: {type(e).__name__}"
-                                    error_occurred_during_generation = True
-                                    break
-
-                                wait_time = initial_retry_delay_s * (2 ** (current_retries - 1))
-                                logging.info(f"{worker_log_prefix} Sẽ thử lại sau {wait_time:.1f} giây...")
-                                self.after(0, lambda: self.update_status(f"🖼 {image_engine_name}: Gặp lỗi tạm thời, chờ {wait_time:.1f}s..."))
-                                
-                                for _ in range(int(wait_time * 10)):
-                                    if self.stop_event.is_set(): break
-                                    time.sleep(0.1)
-                            else:
-                                logging.error(f"{worker_log_prefix} Gặp lỗi Client không thể retry cho ảnh {i+1}: {e}", exc_info=True)
-                                
-                                # Đoạn code mới bạn hỏi nằm ở đây
-                                self._show_non_blocking_error_popup(
-                                    f"Lỗi Tạo Ảnh Imagen #{i+1}",
-                                    f"Lỗi từ phía client hoặc yêu cầu không hợp lệ.\n\nLỗi: {e}\n\nỨng dụng sẽ tiếp tục với các ảnh còn lại.",
-                                    failed_item_identifier=f"{base_filename_for_chain} (Ảnh #{i+1})"
-                                )
-                                if not first_error_message_for_callback: first_error_message_for_callback = f"Lỗi không thể phục hồi cho ảnh #{i+1}: {type(e).__name__}"
-                                error_occurred_during_generation = True
-                                break
-                        
-                        except Exception as e_inner:
-                            logging.error(f"{worker_log_prefix} Lỗi không thể retry khi tạo ảnh Imagen #{i+1}: {e_inner}", exc_info=True)
-                            
-                            # Đoạn code mới bạn hỏi nằm ở đây
-                            self._show_non_blocking_error_popup(
-                                f"Lỗi Tạo Ảnh Imagen #{i+1}",
-                                f"Lỗi không xác định đã xảy ra.\n\nLỗi: {e_inner}\n\nỨng dụng sẽ tiếp tục với các ảnh còn lại.",
-                                failed_item_identifier=f"{base_filename_for_chain} (Ảnh #{i+1})"
-                            )
-                            if not first_error_message_for_callback: first_error_message_for_callback = f"Lỗi không thể phục hồi cho ảnh #{i+1}: {type(e_inner).__name__}"
-                            error_occurred_during_generation = True
-                            break         
-                
-                # Sau khi đã thử tất cả các prompt, lưu file prompt nếu có ít nhất 1 ảnh thành công
-                if all_saved_image_paths:
-                    try:
-                        safe_base_filename = base_filename_for_chain if base_filename_for_chain else f"chain_{uuid.uuid4().hex[:6]}"
-                        prompts_filename = f"prompts_{image_engine_name}_{safe_base_filename}.txt"
-                        saved_prompts_filepath = os.path.join(output_folder, prompts_filename)
-                        with open(saved_prompts_filepath, "w", encoding="utf-8") as f: f.write("\n\n".join(prompts))
-                        logging.info(f"Đã lưu các prompt vào: {saved_prompts_filepath}")
-                    except Exception as e: logging.error(f"Lỗi khi lưu file prompt: {e}")
-
-            except Exception as e_outer:
-                if not first_error_message_for_callback: first_error_message_for_callback = f"Lỗi nghiêm trọng trong quá trình chuẩn bị tạo ảnh: {e_outer}"
-                logging.error(f"{worker_log_prefix} {first_error_message_for_callback}", exc_info=True)
-                error_occurred_during_generation = True
+        with keep_awake(f"Generating {len(prepared_prompts)} Imagen images"):
+            # Gọi Image Service để tạo ảnh
+            saved_image_paths, error_message = self.image_service.generate_imagen_images(
+                prompts=prepared_prompts,
+                num_images_per_prompt=num_images_per_prompt,
+                output_folder=output_folder,
+                api_key=api_key,
+                aspect_ratio=aspect_ratio,
+                style_prompt_fragment=style_prompt_fragment,
+                negative_prompt=negative_prompt,
+                stop_event=lambda: self.stop_event.is_set(),
+                max_retries_per_prompt=2,
+                retry_delay_seconds=5.0
+            )
             
-            finally:
+            # Track API calls nếu thành công
+            if saved_image_paths:
+                self._track_api_call(service_name="imagen_images", units=len(saved_image_paths))
+            
+            # Gọi callback để xử lý kết quả
                 self.after(0, self._handle_slideshow_creation_and_completion,
-                           all_saved_image_paths,
+                      saved_image_paths,
                            script_for_slideshow_timing,
                            original_plain_text_for_dub,
                            output_folder,
@@ -5411,8 +5015,7 @@ class SubtitleApp(ctk.CTk):
                            image_engine_name,
                            ai_script_engine_name,
                            base_filename_for_chain,
-                           first_error_message_for_callback,
-                           output_dir_override)
+                      error_message)
 
 
 # HÀM HELPER MỚI: HIỂN THỊ POPUP LỖI KHÔNG CHẶN
@@ -5524,101 +5127,35 @@ class SubtitleApp(ctk.CTk):
 
     def _execute_gemini_script_editing_thread(self, script_content, user_instruction, target_widget, context):
         """
-        Hàm worker (chạy trong luồng): Gọi API Gemini và xử lý phản hồi.
-        ĐÃ NÂNG CẤP: Thêm logic thử lại (retry) khi gặp lỗi giới hạn (Rate Limit).
+        [REFACTORED] Hàm worker (chạy trong luồng): Gọi API Gemini và xử lý phản hồi.
+        Sử dụng AIService để xử lý business logic, chỉ xử lý UI callbacks ở đây.
         """
-        # <<< DI CHUYỂN IMPORT LÊN ĐẦU HÀM >>>
-        import google.generativeai as genai
-        from google.api_core import exceptions as google_exceptions
-
-        log_prefix = f"[GeminiExec_v2:{context}]" # Thêm v2 để dễ theo dõi
+        log_prefix = f"[GeminiExec_v2:{context}]"
         logging.info(f"{log_prefix} Bắt đầu xử lý kịch bản với Gemini...")
 
-        processed_script = None
-        error_message = None
-        max_retries = 3 # Thử lại tối đa 3 lần
-        retry_delay_seconds = 20 # Bắt đầu chờ 20 giây
+        # Lấy API key
+        gemini_api_key = self.gemini_key_var.get()
+        if not gemini_api_key:
+            error_message = "Lỗi: Vui lòng nhập Gemini API Key."
+            self.after(0, self._handle_gemini_script_editing_result, None, error_message, target_widget, context)
+            return
 
-        for attempt in range(max_retries + 1):
-            if self.stop_event.is_set():
-                error_message = "Đã dừng bởi người dùng."
-                logging.info(f"{log_prefix} Yêu cầu dừng được phát hiện.")
-                break
-
-            try:
-                gemini_api_key = self.gemini_key_var.get()
-                if not gemini_api_key: # Kiểm tra key ở đây
-                    error_message = "Lỗi: Vui lòng nhập Gemini API Key."
-                    break
-
-                genai.configure(api_key=gemini_api_key)
-                
-                # Tự động chọn model khả dụng
-                model = None
-                model_names_to_try = ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-pro', 'gemini-1.5-pro-latest']
-                
-                for model_name in model_names_to_try:
-                    try:
-                        # Chỉ tạo model, không test trước (sẽ test khi gọi API thực tế)
-                        model = genai.GenerativeModel(model_name)
-                        logging.debug(f"{log_prefix} Đã chọn model: {model_name}")
-                        break
-                    except Exception as model_e:
-                        logging.debug(f"{log_prefix} Model {model_name} không khả dụng: {model_e}")
-                        continue
-                
-                if not model:
-                    # Fallback: thử list_models và lấy model đầu tiên
-                    try:
-                        models = genai.list_models()
-                        if models:
-                            first_model_name = models[0].name.split('/')[-1] if '/' in models[0].name else models[0].name
-                            model = genai.GenerativeModel(first_model_name)
-                            logging.debug(f"{log_prefix} Dùng fallback model: {first_model_name}")
-                        else:
-                            raise Exception("Không tìm thấy model nào khả dụng.")
-                    except Exception as fallback_e:
-                        error_message = f"Không thể tìm thấy model Gemini khả dụng. Lỗi: {fallback_e}"
-                        logging.error(f"{log_prefix} {error_message}")
-                        break
-
-                # Xây dựng prompt
-                action_type = "tạo mới" if not script_content else "biên tập"
-                prompt_parts = [
-                    f"Bạn là một trợ lý AI chuyên {action_type} kịch bản cho video. Hãy thực hiện yêu cầu sau: '{user_instruction}'.",
-                    "QUAN TRỌNG: Chỉ trả về duy nhất nội dung kịch bản đã xử lý, không thêm bất kỳ lời dẫn, giải thích hay định dạng markdown nào."
-                ]
-                if script_content:
-                    prompt_parts.append(f"\nNội dung kịch bản gốc để biên tập:\n---\n{script_content}\n---")
-                final_prompt = "\n".join(prompt_parts)
-
-                logging.info(f"{log_prefix} (Thử lần {attempt + 1}/{max_retries + 1}) Đang gửi yêu cầu đến Gemini...")
-
-                # Gọi API
-                response = model.generate_content(final_prompt)
-
-                if not response.parts:
-                    block_reason = response.prompt_feedback.block_reason.name if response.prompt_feedback else "Không rõ"
-                    raise RuntimeError(f"Yêu cầu đã bị chặn bởi bộ lọc an toàn của Gemini (Lý do: {block_reason}).")
-
-                processed_script = response.text
-                logging.info(f"{log_prefix} Gemini đã xử lý thành công.")
-                error_message = None # Reset lỗi nếu thành công
-                break # Thoát khỏi vòng lặp retry nếu thành công
-
-            except google_exceptions.ResourceExhausted as e:
-                logging.warning(f"{log_prefix} (Thử lần {attempt + 1}) Lỗi ResourceExhausted (Rate Limit): {e}")
-                if attempt < max_retries:
-                    logging.info(f"{log_prefix} Sẽ thử lại sau {retry_delay_seconds} giây...")
-                    self.after(0, lambda d=retry_delay_seconds: self.update_status(f"💎 Gemini: Đã đạt giới hạn. Thử lại sau {d} giây..."))
-                    time.sleep(retry_delay_seconds)
-                    retry_delay_seconds *= 2 # Tăng thời gian chờ cho lần thử sau
-                else:
-                    error_message = f"Lỗi giới hạn (Rate Limit) sau {max_retries + 1} lần thử. Vui lòng đợi một lát hoặc kiểm tra gói cước của bạn."
-            except Exception as e:
-                error_message = f"Lỗi khi gọi API Gemini: {type(e).__name__} - {e}"
-                logging.error(f"{log_prefix} {error_message}", exc_info=True)
-                break # Thoát vòng lặp với các lỗi khác không phải Rate Limit
+        # Gọi AI Service để xử lý
+        try:
+            processed_script, error_message = self.ai_service.process_script_with_gemini(
+                script_content=script_content,
+                user_instruction=user_instruction,
+                api_key=gemini_api_key,
+                model_name=None,  # Auto-select
+                stop_event=lambda: self.stop_event.is_set(),
+                max_retries=3,
+                retry_delay_seconds=20
+            )
+            
+        except Exception as e:
+            error_message = f"Lỗi nghiêm trọng khi sử dụng AI Service: {type(e).__name__} - {e}"
+            logging.error(f"{log_prefix} {error_message}", exc_info=True)
+            processed_script = None
 
         # Gọi hàm callback trên luồng chính để cập nhật UI
         self.after(0, self._handle_gemini_script_editing_result, processed_script, error_message, target_widget, context)
@@ -6262,121 +5799,39 @@ class SubtitleApp(ctk.CTk):
                                            trigger_dalle_chain_flag=False,
                                            trigger_dub_chain_flag=False,
                                            base_filename_for_chain=None): 
-
+        """
+        [REFACTORED] Hàm logic chính cho chức năng biên tập GPT.
+        Sử dụng AIService để xử lý business logic, chỉ xử lý UI callbacks ở đây.
+        """
         log_prefix = f"[GPTScriptExec:{selected_model}:{calling_button_context}]"
 
         action_type_log = "tạo mới kịch bản" if not script_content_to_process.strip() else "biên tập kịch bản hiện có"
         logging.info(f"{log_prefix} Bắt đầu {action_type_log}. Instruction: '{user_instruction[:50]}...'")
         
-        processed_script_content = None
-        error_message_detail = None # Sẽ chứa thông điệp lỗi chi tiết cho UI
+        # Lấy API key
+        api_key = self.openai_key_var.get()
+        if not api_key:
+            error_message_detail = "Lỗi cấu hình: OpenAI API Key bị thiếu. Vui lòng kiểm tra trong 'Cài đặt API Keys'."
+            logging.error(f"{log_prefix} {error_message_detail}")
+            self.after(0, self._handle_gpt_script_editing_result, None, error_message_detail, 
+                      target_textbox_widget, calling_button_context,
+                      trigger_dalle_chain_flag, trigger_dub_chain_flag, base_filename_for_chain)
+            return
 
+        # Gọi AI Service để xử lý
         try:
-            # Kiểm tra thư viện OpenAI và API Key (đã được import và kiểm tra ở các bước trước khi gọi hàm này)
-            if not HAS_OPENAI or OpenAI is None: # OpenAI nên là biến global đã import hoặc self.OpenAI nếu bạn gán nó
-                error_message_detail = "Lỗi nghiêm trọng: Thư viện OpenAI không khả dụng (HAS_OPENAI=False)."
-                logging.critical(f"{log_prefix} {error_message_detail}")
-                self.after(0, self._handle_gpt_script_editing_result, None, error_message_detail, target_textbox_widget, calling_button_context)
-                return
-
-            api_key = self.openai_key_var.get()
-            if not api_key:
-                error_message_detail = "Lỗi cấu hình: OpenAI API Key bị thiếu. Vui lòng kiểm tra trong 'Cài đặt API Keys'."
-                logging.error(f"{log_prefix} {error_message_detail}")
-                self.after(0, self._handle_gpt_script_editing_result, None, error_message_detail, target_textbox_widget, calling_button_context)
-                return
-
-            # Khởi tạo OpenAI client
-            client = OpenAI(api_key=api_key, timeout=180.0) # Timeout 3 phút, có thể điều chỉnh
-
-            # --- Xây dựng Prompt cho GPT ---
-            system_message_content = (
-                "You are an AI assistant. Your task is to either generate new script content or edit existing script content based on the user's instructions. "
-                "Return ONLY the resulting script content. Do not add any introductory phrases (e.g., 'Here is the edited script:'), concluding remarks, "
-                "or explanations about your actions, unless the user's instruction explicitly asks for them. "
-                "If generating new content, structure it clearly, often with each distinct idea or dialogue on a new line or new paragraph as appropriate for a script. "
-                "If editing existing content, try to preserve the general structure (like line breaks between dialogue blocks) unless the instruction implies changes to structure (e.g., 'merge short sentences')."
+            processed_script_content, error_message_detail = self.ai_service.process_script_with_gpt(
+                script_content=script_content_to_process,
+                user_instruction=user_instruction,
+                api_key=api_key,
+                model_name=selected_model,
+                stop_event=lambda: self.stop_event.is_set()
             )
             
-            user_message_content_parts = [f"User Instruction: \"{user_instruction}\"\n"]
-
-            if script_content_to_process.strip(): # Nếu có nội dung hiện tại để biên tập
-                user_message_content_parts.append(
-                    f"\nPlease apply this instruction to the following existing script content. "
-                    f"Remember to return only the modified script text.\n\n"
-                    f"--- EXISTING SCRIPT CONTENT START ---\n"
-                    f"{script_content_to_process}\n"
-                    f"--- EXISTING SCRIPT CONTENT END ---\n\n"
-                    f"Processed Script Content:"
-                )
-            else: # Nếu không có nội dung -> yêu cầu tạo mới
-                user_message_content_parts.append(
-                    f"\nPlease generate the script content based on the instruction above. "
-                    f"Remember to return only the generated script text.\n\n"
-                    f"Generated Script Content:"
-                )
-            
-            user_message_content = "".join(user_message_content_parts)
-            
-            # Logging chi tiết (có thể bật/tắt khi debug)
-            # logging.debug(f"{log_prefix} System message: {system_message_content}")
-            # log_user_instruction_part = f"User Instruction: \"{user_instruction[:100]}{'...' if len(user_instruction) > 100 else ''}\""
-            # log_script_content_part = f"Script Content to Process (first 100 chars): \"{script_content_to_process[:100].replace(chr(10), ' ')}{'...' if len(script_content_to_process) > 100 else ''}\""
-            # logging.debug(f"{log_prefix} User message constructed with: {log_user_instruction_part} and {log_script_content_part}")
-
-            # <<<--- BẮT ĐẦU THÊM CHO BƯỚC 2.1 ---<<<
-            if self.stop_event.is_set():
-                raise InterruptedError("Dừng bởi người dùng trước khi gọi API GPT Biên Tập.")
-            
-            # Gọi API OpenAI
-            logging.info(f"{log_prefix} Đang gửi yêu cầu đến model '{selected_model}'...")
-            response = client.chat.completions.create(
-                model=selected_model, 
-                messages=[
-                    {"role": "system", "content": system_message_content},
-                    {"role": "user", "content": user_message_content}
-                ],
-                temperature=0.5, # Nhiệt độ cho sự cân bằng giữa sáng tạo và chính xác
-                                 # Có thể tăng lên 0.5-0.7 nếu muốn "sáng tạo" hơn khi tạo mới.
-                # max_tokens: Thường OpenAI tự quản lý tốt. Nếu cần, bạn có thể ước lượng:
-                # max_tokens_estimate = int(len(script_content_to_process) * 2.0) + int(len(user_instruction) * 1.5) + 300 
-                # max_tokens = max(1000, max_tokens_estimate) # Đảm bảo tối thiểu 1000 tokens
-            )
-            
-            processed_script_content = response.choices[0].message.content.strip()
-            # Ghi log một phần kết quả để kiểm tra
-            logging.info(f"{log_prefix} GPT đã xử lý xong. Độ dài output: {len(processed_script_content)} chars.")
-            logging.debug(f"{log_prefix} Output (first 100 chars): '{processed_script_content[:100].replace(chr(10), ' ')}...'")
-
-        # Xử lý các lỗi cụ thể của OpenAI API
-        except RateLimitError as e_rate:
-            error_message_detail = f"Lỗi Giới hạn Yêu cầu (Rate Limit) từ OpenAI. Vui lòng thử lại sau một khoảng thời gian. Chi tiết: {str(e_rate)}"
-            logging.warning(f"{log_prefix} {error_message_detail}")
-        except AuthenticationError as e_auth:
-            error_message_detail = f"Lỗi Xác thực OpenAI: API Key của bạn không hợp lệ, hết hạn, hoặc không có đủ quyền. Vui lòng kiểm tra lại. Chi tiết: {str(e_auth)}"
-            logging.error(f"{log_prefix} {error_message_detail}")
-        except APIConnectionError as e_conn:
-            error_message_detail = f"Lỗi Kết nối đến server OpenAI: Không thể thiết lập kết nối. Vui lòng kiểm tra kết nối mạng của bạn. Chi tiết: {str(e_conn)}"
-            logging.error(f"{log_prefix} {error_message_detail}")
-        except APITimeoutError as e_timeout:
-            error_message_detail = f"Lỗi Timeout với OpenAI: Yêu cầu xử lý mất quá nhiều thời gian và đã bị ngắt. Vui lòng thử lại hoặc chia nhỏ yêu cầu nếu kịch bản quá dài. Chi tiết: {str(e_timeout)}"
-            logging.error(f"{log_prefix} {error_message_detail}")
-        except APIStatusError as e_status: # Các lỗi trạng thái khác từ API
-            status_code = e_status.status_code if hasattr(e_status, 'status_code') else 'N/A'
-            err_msg_from_api = e_status.message if hasattr(e_status, 'message') else str(e_status)
-            error_message_detail = f"Lỗi từ API OpenAI (Mã trạng thái: {status_code}): {err_msg_from_api}"
-            logging.error(f"{log_prefix} {error_message_detail}")
-        except ImportError: # Trường hợp HAS_OPENAI=True nhưng import OpenAI trong hàm này bị lỗi (hiếm)
-             error_message_detail = "Lỗi nghiêm trọng: Không thể import thư viện OpenAI bên trong luồng xử lý."
-             logging.critical(f"{log_prefix} {error_message_detail}")
-        # <<<--- BẮT ĐẦU THÊM CHO BƯỚC 3.1 ---<<<
-        except InterruptedError as ie:
-            error_message_detail = f"Đã dừng bởi người dùng."
-            logging.warning(f"{log_prefix} Tác vụ GPT Biên Tập bị dừng bởi người dùng: {ie}")
-        # <<<--- KẾT THÚC THÊM CHO BƯỚC 3.1 ---<<<
-        except Exception as e_general: # Bắt các lỗi không mong muốn khác
-            error_message_detail = f"Lỗi không mong muốn trong quá trình xử lý kịch bản với GPT: {type(e_general).__name__} - {str(e_general)}"
+        except Exception as e:
+            error_message_detail = f"Lỗi nghiêm trọng khi sử dụng AI Service: {type(e).__name__} - {e}"
             logging.error(f"{log_prefix} {error_message_detail}", exc_info=True)
+            processed_script_content = None
 
         # Gọi hàm callback trên luồng chính để cập nhật UI
         self.after(0, self._handle_gpt_script_editing_result,
@@ -6523,115 +5978,48 @@ class SubtitleApp(ctk.CTk):
                                            original_target_widget,
                                            original_trigger_dub_chain_flag):
         """
-        Chạy trong luồng: Gọi GPT để chia kịch bản (từ script_content_for_gpt_analysis)
-        thành các phân cảnh và tạo ra các DALL-E prompt tương ứng.
+        [REFACTORED] Chạy trong luồng: Gọi GPT để chia kịch bản thành các phân cảnh và tạo ra các DALL-E prompt tương ứng.
+        Sử dụng AIService để xử lý business logic, chỉ xử lý UI callbacks ở đây.
         original_plain_gpt_text_for_dub là text thuần gốc từ GPT, được truyền qua để dùng cho bước thuyết minh sau này.
         """
         worker_log_prefix = f"[GPT_SceneDivision_{selected_gpt_model}]"
-        logging.info(f"{worker_log_prefix} Bắt đầu chia kịch bản (input: '{script_content_for_gpt_analysis[:50].replace(chr(10),' ')}...') và tạo {num_images_to_generate} DALL-E prompts.") #
-        logging.info(f"{worker_log_prefix}   Plain text gốc đi kèm (cho dub): '{original_plain_gpt_text_for_dub[:50].replace(chr(10),' ')}...'") #
+        logging.info(f"{worker_log_prefix} Bắt đầu chia kịch bản (input: '{script_content_for_gpt_analysis[:50].replace(chr(10),' ')}...') và tạo {num_images_to_generate} DALL-E prompts.")
+        logging.info(f"{worker_log_prefix}   Plain text gốc đi kèm (cho dub): '{original_plain_gpt_text_for_dub[:50].replace(chr(10),' ')}...'")
 
-        list_of_dalle_prompts = [] #
-        error_message_division = None #
+        # Lấy API key
+        api_key = self.openai_key_var.get()
+        if not api_key:
+            error_message_division = "Lỗi cấu hình: OpenAI API Key bị thiếu."
+            self.after(0, self._handle_gpt_scene_division_result,
+                      None, error_message_division, script_content_for_gpt_analysis,
+                      original_plain_gpt_text_for_dub, original_gpt_context,
+                      original_target_widget, original_trigger_dub_chain_flag)
+            return
 
+        # Gọi AI Service để xử lý
         try:
-            if not HAS_OPENAI or OpenAI is None: #
-                error_message_division = "Lỗi nghiêm trọng: Thư viện OpenAI không khả dụng." #
-                logging.critical(f"{worker_log_prefix} {error_message_division}") #
-                # Không gọi self.after ở đây nữa, khối finally sẽ xử lý
-                return # Thoát sớm nếu thiếu thư viện cơ bản
-
-            api_key = self.openai_key_var.get() #
-            if not api_key: #
-                error_message_division = "Lỗi cấu hình: OpenAI API Key bị thiếu." #
-                logging.error(f"{worker_log_prefix} {error_message_division}") #
-                return # Thoát sớm
-
-            client = OpenAI(api_key=api_key, timeout=180.0) #
-
-            # --- CẬP NHẬT SYSTEM MESSAGE ---
-            system_message_content = (
-                "Bạn là một trợ lý AI chuyên phân tích kịch bản và tạo mô tả hình ảnh an toàn, phù hợp với mọi đối tượng, với mục tiêu tạo ra hình ảnh chân thực và sắc nét. "
-                "Nhiệm vụ của bạn là đọc hiểu kịch bản được cung cấp, sau đó chia nó thành một số lượng phân cảnh hoặc khoảnh khắc quan trọng đã được chỉ định. "
-                "Với mỗi phân cảnh, bạn phải tạo ra một prompt mô tả hình ảnh ngắn gọn, súc tích (bằng tiếng Anh, tối đa khoảng 40-60 từ) phù hợp cho một AI tạo hình ảnh như DALL-E. "
-                "Mỗi prompt DALL-E nên tập trung nắm bắt được bản chất hình ảnh của phân cảnh tương ứng: bối cảnh, ngoại hình/hành động nổi bật của nhân vật (nếu có), đối tượng quan trọng, và không khí/cảm xúc của cảnh. "
-
-                # --- HƯỚNG DẪN PHONG CÁCH MỚI ---
-                "QUAN TRỌNG VỀ PHONG CÁCH ẢNH: "
-                "1. Ưu tiên phong cách TẢ THỰC, CHI TIẾT CAO, như ảnh chụp chất lượng cao hoặc render 3D điện ảnh. Hình ảnh cần SẮC NÉT, RÕ RÀNG, với nhiều chi tiết tinh xảo. "
-                "2. TRỪ KHI KỊCH BẢN GỐC YÊU CẦU RÕ RÀNG một phong cách khác (ví dụ: 'hoạt hình', 'anime', 'tranh vẽ'), hãy MẶC ĐỊNH hướng tới phong cách CHÂN THỰC 3D. Hạn chế tối đa việc tạo ra các prompt gợi ý tranh vẽ 2D, hoạt hình, hoặc anime nếu không được yêu cầu cụ thể. "
-                "3. Để đạt được điều này, hãy cân nhắc sử dụng các từ khóa mô tả phong cách trong các DALL-E prompt (bằng tiếng Anh) như: 'photorealistic', 'hyperrealistic', 'highly detailed', 'sharp focus', '3D render', 'cinematic lighting', 'Unreal Engine 5 style', 'V-Ray render', 'octane render', 'detailed skin texture', 'intricate details', 'professional photography', '8K resolution' (DALL-E sẽ hiểu ý đồ về độ chi tiết, dù nó không thực sự render 8K). "
-                # --- KẾT THÚC HƯỚNG DẪN PHONG CÁCH MỚI ---
-
-                "QUAN TRỌNG VỀ AN TOÀN NỘI DUNG: Tất cả các prompt DALL-E phải TUÂN THỦ NGHIÊM NGẶT chính sách nội dung của OpenAI. "
-                "TRÁNH TUYỆT ĐỐI các mô tả có thể bị coi là bạo lực, người lớn, thù địch, tự hại, hoặc lừa đảo. Ưu tiên sự an toàn và tích cực. "
-                "Không mô tả các hành động cụ thể có thể bị cấm (ví dụ: sử dụng vũ khí, hành vi nguy hiểm rõ ràng). Thay vào đó, hãy tập trung vào cảm xúc, bối cảnh và các yếu tố hình ảnh trung tính. "
-                "TRÁNH đưa lời thoại, tên nhân vật đang nói, hoặc các yếu tố không phải là mô tả hình ảnh thuần túy vào prompt DALL-E. "
-                "Nếu kịch bản gốc không phải tiếng Anh, hãy dịch các yếu tố hình ảnh quan trọng sang tiếng Anh cho các DALL-E prompt, đồng thời đảm bảo tính an toàn và phong cách chân thực của nội dung đã dịch. "
-                "ĐẶC BIỆT LƯU Ý: Các prompt DALL-E mà bạn tạo ra phải hướng dẫn DALL-E KHÔNG ĐƯỢC VIẾT BẤT KỲ CHỮ, KÝ TỰ, HAY VĂN BẢN nào lên hình ảnh được tạo ra. Hình ảnh cuối cùng phải hoàn toàn không có chữ. Nếu cần, hãy thêm các cụm từ như 'no text', 'text-free', 'image only, no writing', 'avoid typography', 'typography-free' vào cuối mỗi DALL-E prompt để nhấn mạnh yêu cầu này."
+            list_of_dalle_prompts, error_message_division = self.ai_service.divide_scene_with_gpt(
+                script_content=script_content_for_gpt_analysis,
+                num_images=num_images_to_generate,
+                api_key=api_key,
+                model_name=selected_gpt_model,
+                character_sheet_text="",  # GPT scene division doesn't use character sheet
+                stop_event=lambda: self.stop_event.is_set()
             )
             
-            user_message_content = (
-                f"Dưới đây là một kịch bản:\n\n"
-                f"```script\n{script_content_for_gpt_analysis}\n```\n\n"  # << SỬA Ở ĐÂY: sử dụng script_content_for_gpt_analysis
-                f"Dựa vào kịch bản trên, hãy chia nó thành đúng {num_images_to_generate} phân cảnh hoặc khoảnh khắc hình ảnh quan trọng. " #
-                f"Sau đó, với mỗi phân cảnh, hãy tạo một prompt bằng tiếng Anh để DALL-E vẽ ảnh minh họa. " #
-                f"Yêu cầu quan trọng: Chỉ trả về {num_images_to_generate} prompt DALL-E này, mỗi prompt trên một dòng mới. " #
-                f"Không thêm bất kỳ giải thích, đánh số, hay định dạng nào khác ngoài các dòng prompt này." #
-            )
-
-            # <<<--- BẮT ĐẦU THÊM CHO BƯỚC 2.2 ---<<<
-            if self.stop_event.is_set():
-                raise InterruptedError("Dừng bởi người dùng trước khi gọi API GPT Chia Cảnh.")
-            # <<<--- KẾT THÚC THÊM CHO BƯỚC 2.2 ---<<<            
-            logging.info(f"{worker_log_prefix} Đang gửi yêu cầu đến model '{selected_gpt_model}' để tạo {num_images_to_generate} DALL-E prompts...") #
-            
-            response = client.chat.completions.create( #
-                model=selected_gpt_model, #
-                messages=[ #
-                    {"role": "system", "content": system_message_content}, #
-                    {"role": "user", "content": user_message_content} #
-                ],
-                temperature=0.5, #
-            )
-            
-            gpt_response_content = response.choices[0].message.content.strip() #
-            logging.info(f"{worker_log_prefix} GPT đã phản hồi. Nội dung (rút gọn): '{gpt_response_content[:200].replace(chr(10), ' // ')}...'") #
-
-            raw_prompts = gpt_response_content.splitlines() #
-            for p_line in raw_prompts: #
-                p_line_stripped = p_line.strip() #
-                if p_line_stripped: #
-                    list_of_dalle_prompts.append(p_line_stripped) #
-            
-            if not list_of_dalle_prompts: #
-                error_message_division = "GPT không trả về DALL-E prompt nào hoặc định dạng không đúng." #
-                logging.warning(f"{worker_log_prefix} {error_message_division}. Phản hồi gốc: {gpt_response_content}") #
-            elif len(list_of_dalle_prompts) != num_images_to_generate: #
-                logging.warning(f"{worker_log_prefix} GPT trả về {len(list_of_dalle_prompts)} prompts, nhưng yêu cầu là {num_images_to_generate}. Sẽ cố gắng sử dụng các prompt có được.") #
-
-            logging.info(f"{worker_log_prefix} Đã trích xuất được {len(list_of_dalle_prompts)} DALL-E prompt(s).") #
-
-        except RateLimitError as e_rate: #
-            error_message_division = f"Lỗi Giới hạn Yêu cầu (Rate Limit) từ OpenAI khi tạo DALL-E prompts. Chi tiết: {str(e_rate)}" #
-            logging.warning(f"{worker_log_prefix} {error_message_division}") #
-        except AuthenticationError as e_auth: #
-            error_message_division = f"Lỗi Xác thực OpenAI khi tạo DALL-E prompts: API Key không hợp lệ/hết hạn. Chi tiết: {str(e_auth)}" #
-            logging.error(f"{worker_log_prefix} {error_message_division}") #
-        except APIConnectionError as e_conn: #
-            error_message_division = f"Lỗi Kết nối đến server OpenAI khi tạo DALL-E prompts. Chi tiết: {str(e_conn)}" #
-            logging.error(f"{worker_log_prefix} {error_message_division}") #
-        except APITimeoutError as e_timeout: #
-            error_message_division = f"Lỗi Timeout với OpenAI khi tạo DALL-E prompts. Chi tiết: {str(e_timeout)}" #
-            logging.error(f"{worker_log_prefix} {error_message_division}") #
-        except APIStatusError as e_status: #
-            status_code = e_status.status_code if hasattr(e_status, 'status_code') else 'N/A' #
-            err_msg_from_api = e_status.message if hasattr(e_status, 'message') else str(e_status) #
-            error_message_division = f"Lỗi từ API OpenAI (Mã trạng thái: {status_code}) khi tạo DALL-E prompts: {err_msg_from_api}" #
-            logging.error(f"{worker_log_prefix} {error_message_division}") #
-        except Exception as e_general: # Ngoại lệ này sẽ bắt NameError nếu vẫn còn
-            error_message_division = f"Lỗi không mong muốn khi GPT chia cảnh: {type(e_general).__name__} - {str(e_general)}" #
-            logging.error(f"{worker_log_prefix} {error_message_division}", exc_info=True) #
+            if error_message_division and not list_of_dalle_prompts:
+                # Có lỗi và không có kết quả nào
+                logging.error(f"{worker_log_prefix} {error_message_division}")
+            elif list_of_dalle_prompts:
+                # Có kết quả (có thể ít hơn số lượng yêu cầu)
+                if len(list_of_dalle_prompts) != num_images_to_generate:
+                    logging.warning(f"{worker_log_prefix} GPT trả về {len(list_of_dalle_prompts)} prompts, nhưng yêu cầu là {num_images_to_generate}. Sẽ cố gắng sử dụng các prompt có được.")
+                logging.info(f"{worker_log_prefix} Đã trích xuất được {len(list_of_dalle_prompts)} DALL-E prompt(s).")
+                
+        except Exception as e:
+            error_message_division = f"Lỗi nghiêm trọng khi sử dụng AI Service: {type(e).__name__} - {e}"
+            logging.error(f"{worker_log_prefix} {error_message_division}", exc_info=True)
+            list_of_dalle_prompts = None
 
         finally:
             # Gọi hàm callback trên luồng chính để xử lý kết quả
@@ -7273,162 +6661,96 @@ class SubtitleApp(ctk.CTk):
                                                   target_textbox_widget_for_next_step, gpt_context_for_next_step,
                                                   trigger_dub_chain_flag,
                                                   image_engine_name, ai_script_engine_name,
-                                                  base_filename_for_chain): # <<< THÊM VÀO ĐÂY
+                                                  base_filename_for_chain):
+        """
+        [REFACTORED] Tạo ảnh DALL-E từ danh sách prompts.
+        Sử dụng ImageService để xử lý business logic, chỉ xử lý UI callbacks ở đây.
+        """
+        worker_log_prefix = f"[DalleChainExecIterative:{selected_dalle_model}]"
+        logging.info(f"{worker_log_prefix} Bắt đầu. CostSaver: {is_cost_saver_mode_active}, Tổng ảnh User muốn: {num_images_total_requested_by_user}, Số prompts GPT trả về: {len(dalle_prompts_list)}. Trigger Dub: {trigger_dub_chain_flag}")
+        logging.info(f"{worker_log_prefix}   Script cho slideshow timing (sẽ truyền đi): '{script_for_slideshow_timing_next_step[:50].replace(chr(10),' ')}...'")
+        logging.info(f"{worker_log_prefix}   Plain text gốc cho dub (sẽ truyền đi): '{original_plain_gpt_text_for_dub_next_step[:50].replace(chr(10),' ')}...'")
 
-        worker_log_prefix = f"[DalleChainExecIterative:{selected_dalle_model}]" #
-        # Cập nhật log ban đầu để bao gồm các tham số mới
-        logging.info(f"{worker_log_prefix} Bắt đầu. CostSaver: {is_cost_saver_mode_active}, Tổng ảnh User muốn: {num_images_total_requested_by_user}, Số prompts GPT trả về: {len(dalle_prompts_list)}. Trigger Dub: {trigger_dub_chain_flag}") #
-        logging.info(f"{worker_log_prefix}   Script cho slideshow timing (sẽ truyền đi): '{script_for_slideshow_timing_next_step[:50].replace(chr(10),' ')}...'") #
-        logging.info(f"{worker_log_prefix}   Plain text gốc cho dub (sẽ truyền đi): '{original_plain_gpt_text_for_dub_next_step[:50].replace(chr(10),' ')}...'") #
-
-        master_app_ref = self #
-        all_successfully_generated_image_paths = [] # [cite: 326]
-        any_api_error_occurred = False # [cite: 326]
-        final_error_message_for_callback = None #
-        _worker_stopped_by_user = False #
+        master_app_ref = self
+        all_successfully_generated_image_paths = []
+        final_error_message_for_callback = None
 
         with keep_awake(f"Generating {len(dalle_prompts_list)} DALL-E images"):
             try:
-                api_key = master_app_ref.openai_key_var.get() #
-                if not api_key: #
-                    final_error_message_for_callback = "Lỗi: Thiếu API Key OpenAI (DALL-E)" #
-                    raise ValueError("Thiếu OpenAI API Key (DALL-E)") #
-
-                if not (HAS_OPENAI and OpenAI is not None): #
-                    final_error_message_for_callback = "Lỗi: Thiếu thư viện OpenAI (DALL-E)" #
-                    raise ImportError("Thiếu thư viện OpenAI (DALL-E)") #
-
-                client = OpenAI(api_key=api_key, timeout=180.0) # [cite: 330]
+                # Lấy API key
+                api_key = master_app_ref.openai_key_var.get()
+                if not api_key:
+                    final_error_message_for_callback = "Lỗi: Thiếu API Key OpenAI (DALL-E)"
+                    raise ValueError("Thiếu OpenAI API Key (DALL-E)")
 
                 # --- XÁC ĐỊNH DANH SÁCH PROMPT SẼ DÙNG ĐỂ GỌI API DALL-E ---
                 prompts_for_api_calls = []
+                num_images_per_prompt = 1
+                
                 if is_cost_saver_mode_active:
-                    if dalle_prompts_list and dalle_prompts_list[0].strip(): # Phải có ít nhất 1 prompt tóm tắt
+                    if dalle_prompts_list and dalle_prompts_list[0].strip():
                         summary_prompt = dalle_prompts_list[0].strip()
-                        # Lặp lại prompt tóm tắt này cho đủ số lượng ảnh người dùng muốn
-                        prompts_for_api_calls = [summary_prompt] * num_images_total_requested_by_user
+                        # Trong cost saver mode, chỉ cần 1 prompt nhưng tạo nhiều ảnh
+                        prompts_for_api_calls = [summary_prompt]
+                        num_images_per_prompt = num_images_total_requested_by_user
                         logging.info(f"{worker_log_prefix} Chế độ Tiết kiệm: Sử dụng 1 prompt tóm tắt '{summary_prompt[:30]}...' cho {num_images_total_requested_by_user} ảnh.")
                     else:
                         final_error_message_for_callback = "Lỗi: Chế độ Tiết kiệm được bật nhưng không có prompt tóm tắt từ GPT."
                         logging.error(f"{worker_log_prefix} {final_error_message_for_callback}")
                         raise ValueError(final_error_message_for_callback)
-                else: # Không phải chế độ tiết kiệm
+                else:
                     prompts_for_api_calls = [p.strip() for p in dalle_prompts_list if p.strip()]
-                    if not prompts_for_api_calls: # Nếu sau khi strip không còn prompt nào
+                    if not prompts_for_api_calls:
                         final_error_message_for_callback = "Lỗi: GPT không trả về prompt nào hợp lệ sau khi chia cảnh."
                         logging.error(f"{worker_log_prefix} {final_error_message_for_callback}")
                         raise ValueError(final_error_message_for_callback)
-                    # Trong chế độ không tiết kiệm, số ảnh thực tế sẽ bằng số prompt được tạo
-                    logging.info(f"{worker_log_prefix} Chế độ Thường: Sử dụng {len(prompts_for_api_calls)} prompt chi tiết từ GPT. (Người dùng yêu cầu {num_images_total_requested_by_user} ảnh, GPT đã chia theo đó).")
+                    logging.info(f"{worker_log_prefix} Chế độ Thường: Sử dụng {len(prompts_for_api_calls)} prompt chi tiết từ GPT.")
                 
-                total_images_to_actually_generate = len(prompts_for_api_calls) # Số lần gọi API DALL-E thực tế
+                total_images_to_actually_generate = len(prompts_for_api_calls) * num_images_per_prompt
                 if hasattr(master_app_ref, 'update_status'):
-                     master_app_ref.after(0, lambda: master_app_ref.update_status(f"🎨 DALL-E: Chuẩn bị tạo {total_images_to_actually_generate} ảnh...")) #
+                    master_app_ref.after(0, lambda: master_app_ref.update_status(f"🎨 DALL-E: Chuẩn bị tạo {total_images_to_actually_generate} ảnh..."))
 
-                current_timestamp_dalle_iter = int(time.time()) #
-
-                for i, current_dalle_prompt_text in enumerate(prompts_for_api_calls): #
-                    prompt_index_for_log_and_file = i #
-                    
-                    # <<<--- BẮT ĐẦU THÊM CHO BƯỚC 2.3 ---<<<
-                    if master_app_ref.stop_event.is_set(): #
-                        logging.info(f"{worker_log_prefix} Yêu cầu dừng từ ứng dụng (trước khi tạo ảnh #{prompt_index_for_log_and_file + 1}).") #
-                        _worker_stopped_by_user = True #
-                        final_error_message_for_callback = "Đã hủy bởi người dùng (DALL-E image gen loop)" #
-                        break #
-                    # <<<--- KẾT THÚC THÊM CHO BƯỚC 2.3 ---<<<
-                    
-                    if master_app_ref.stop_event.is_set(): #
-                        logging.info(f"{worker_log_prefix} Yêu cầu dừng từ ứng dụng (trước khi tạo ảnh #{prompt_index_for_log_and_file + 1}).") #
-                        _worker_stopped_by_user = True #
-                        final_error_message_for_callback = "Đã hủy bởi người dùng (DALL-E image gen loop)" #
-                        break #
-
-                    # current_dalle_prompt_text đã được strip() khi tạo prompts_for_api_calls
-                    # không cần kiểm tra lại if not current_dalle_prompt_text.strip():
-
-                    if hasattr(master_app_ref, 'update_status'): #
-                        status_api_call_msg_iter = f"🎨 PIU: Đang tạo ảnh... {prompt_index_for_log_and_file + 1}/{total_images_to_actually_generate}..." #
-                        master_app_ref.after(0, lambda msg=status_api_call_msg_iter: master_app_ref.update_status(msg)) #
-
-                    logging.info(f"{worker_log_prefix} Gọi API cho prompt #{prompt_index_for_log_and_file + 1}/{total_images_to_actually_generate}, Model: {selected_dalle_model}, Prompt: '{current_dalle_prompt_text[:50]}...'") #
-
-                    generated_image_url_for_this_prompt = None #
-                    try:
-                        if selected_dalle_model == "dall-e-3": #
-                            response = client.images.generate( #
-                                model=selected_dalle_model, prompt=current_dalle_prompt_text, #
-                                n=1, # DALL-E 3 luôn tạo 1 ảnh mỗi lần gọi với prompt này
-                                size=size, #
-                                quality=quality_setting, style=style_setting, #
-                                response_format="url" #
-                            )
-                        else: # dall-e-2 #
-                            response = client.images.generate( #
-                                model=selected_dalle_model, prompt=current_dalle_prompt_text, #
-                                n=1, # Giữ nguyên n=1 cho mỗi lần lặp để đơn giản hóa, dù DALL-E 2 có thể tạo nhiều hơn
-                                size=size, #
-                                response_format="url" #
-                            )
-
-                        if response.data and response.data[0].url: #
-                            generated_image_url_for_this_prompt = response.data[0].url #
-                        else: #
-                            logging.warning(f"{worker_log_prefix} API DALL-E không trả về URL cho prompt #{prompt_index_for_log_and_file + 1}.") #
-                            self._show_non_blocking_error_popup("Lỗi Tạo Ảnh DALL-E", f"Lỗi tạo ảnh #{prompt_index_for_log_and_file + 1}:\n\nAPI không trả về URL hình ảnh.")
-                            any_api_error_occurred = True #
-                            continue #
-
-                    except Exception as api_err_iter: #
-                        logging.error(f"{worker_log_prefix} Lỗi API DALL-E cho prompt #{prompt_index_for_log_and_file + 1}: {api_err_iter}", exc_info=True) #
-                        any_api_error_occurred = True #
-                        continue #
-
-                    if generated_image_url_for_this_prompt: #
-                        if master_app_ref.stop_event.is_set(): #
-                            _worker_stopped_by_user = True #
-                            final_error_message_for_callback = "Đã hủy bởi người dùng (DALL-E download loop)" #
-                            break #
-
-                        if hasattr(master_app_ref, 'update_status'): #
-                            master_app_ref.after(0, lambda current_img=prompt_index_for_log_and_file+1, total_img=total_images_to_actually_generate: #
-                                                 master_app_ref.update_status(f"🎨 PIU: Đang tải ảnh {current_img}/{total_img}...")) #
-                        try:
-                            img_response_iter = requests.get(generated_image_url_for_this_prompt, timeout=60) #
-                            img_response_iter.raise_for_status() #
-
-                            base_filename_part_iter = f"scene_{prompt_index_for_log_and_file:02d}" #
-                            file_name_iter = f"dalle_{base_filename_part_iter}_{current_timestamp_dalle_iter}.png" #
-                            file_path_iter = os.path.join(output_folder_for_images, file_name_iter) #
-
-                            with open(file_path_iter, "wb") as f_iter: f_iter.write(img_response_iter.content) #
-                            all_successfully_generated_image_paths.append(file_path_iter) #
-                            logging.info(f"{worker_log_prefix} Đã lưu ảnh từ URL (Prompt #{prompt_index_for_log_and_file + 1}): {file_path_iter}") #
-                        except Exception as download_err_iter: #
-                            logging.error(f"{worker_log_prefix} Lỗi tải ảnh DALL-E từ URL (Prompt #{prompt_index_for_log_and_file + 1}): {download_err_iter}") #
-
-                            error_details_for_popup_dl = f"Lỗi tải ảnh DALL-E #{prompt_index_for_log_and_file + 1}:\n\n{str(download_err_iter)[:500]}"
-                            self._show_non_blocking_error_popup("Lỗi Tải Ảnh DALL-E", error_details_for_popup_dl)
-                  
-                            any_api_error_occurred = True #
+                # Gọi Image Service để tạo ảnh
+                # Note: ImageService sẽ xử lý từng prompt và tạo num_images_per_prompt cho mỗi prompt
+                # Nhưng trong trường hợp cost saver, ta muốn tạo num_images_total_requested_by_user với 1 prompt
+                # Vậy ta sẽ gọi service với prompts và num_images phù hợp
+                saved_image_paths, error_message = self.image_service.generate_dalle_images(
+                    prompts=prompts_for_api_calls,
+                    num_images=num_images_per_prompt,
+                    output_folder=output_folder_for_images,
+                    api_key=api_key,
+                    model=selected_dalle_model,
+                    size=size,
+                    quality=quality_setting if selected_dalle_model == "dall-e-3" else None,
+                    style=style_setting if selected_dalle_model == "dall-e-3" else None,
+                    stop_event=lambda: master_app_ref.stop_event.is_set(),
+                    max_retries=2,
+                    retry_delay_seconds=10.0
+                )
                 
-                if not _worker_stopped_by_user: #
-                    if any_api_error_occurred and all_successfully_generated_image_paths: #
-                        final_error_message_for_callback = "Một số ảnh DALL-E có thể đã gặp lỗi khi tạo hoặc tải." #
-                    elif any_api_error_occurred and not all_successfully_generated_image_paths: #
-                        final_error_message_for_callback = "Lỗi tạo hoặc tải tất cả ảnh DALL-E." #
+                all_successfully_generated_image_paths = saved_image_paths
+                
+                if error_message:
+                    if saved_image_paths:
+                        final_error_message_for_callback = f"Một số ảnh DALL-E có thể đã gặp lỗi: {error_message}"
+                    else:
+                        final_error_message_for_callback = f"Lỗi tạo ảnh DALL-E: {error_message}"
+                elif not saved_image_paths:
+                    final_error_message_for_callback = "Không tạo được ảnh DALL-E nào."
 
-            except (ValueError, ImportError) as e_setup: #
-                logging.error(f"{worker_log_prefix} Lỗi thiết lập DALL-E: {e_setup}") #
-                if not final_error_message_for_callback: final_error_message_for_callback = str(e_setup) #
-            except Exception as e_dalle_outer_iter: #
-                logging.error(f"{worker_log_prefix} Lỗi không mong muốn trong chuỗi tạo ảnh DALL-E: {e_dalle_outer_iter}", exc_info=True) #
-                if not final_error_message_for_callback: final_error_message_for_callback = f"Lỗi DALL-E không xác định: {str(e_dalle_outer_iter)[:100]}" #
+            except (ValueError, ImportError) as e_setup:
+                logging.error(f"{worker_log_prefix} Lỗi thiết lập DALL-E: {e_setup}")
+                if not final_error_message_for_callback:
+                    final_error_message_for_callback = str(e_setup)
+            except Exception as e_dalle_outer_iter:
+                logging.error(f"{worker_log_prefix} Lỗi không mong muốn trong chuỗi tạo ảnh DALL-E: {e_dalle_outer_iter}", exc_info=True)
+                if not final_error_message_for_callback:
+                    final_error_message_for_callback = f"Lỗi DALL-E không xác định: {str(e_dalle_outer_iter)[:100]}"
             
-            finally: #
-                if hasattr(master_app_ref, 'is_dalle_processing'): #
-                    master_app_ref.is_dalle_processing = False #
-                logging.debug(f"{worker_log_prefix} Đã kết thúc luồng _execute_dalle_chain_generation_iterative.") #
+            finally:
+                if hasattr(master_app_ref, 'is_dalle_processing'):
+                    master_app_ref.is_dalle_processing = False
+                logging.debug(f"{worker_log_prefix} Đã kết thúc luồng _execute_dalle_chain_generation_iterative.")
                 
                 self.after(0, self._handle_slideshow_creation_and_completion,
                            all_successfully_generated_image_paths,
@@ -7440,7 +6762,7 @@ class SubtitleApp(ctk.CTk):
                            trigger_dub_chain_flag,
                            image_engine_name,
                            ai_script_engine_name,
-                           base_filename_for_chain, # <<< THÊM VÀO ĐÂY
+                           base_filename_for_chain,
                            final_error_message_for_callback)
             
 
@@ -8385,124 +7707,42 @@ class SubtitleApp(ctk.CTk):
 
     def _execute_imagen_generation_thread(self, prompt, negative_prompt, number_of_images, output_folder, aspect_ratio):
         """
-        (chạy trong luồng):
-        Sử dụng hàm client.models.generate_images và model Imagen 3 chuyên dụng.
+        [REFACTORED] Tạo ảnh Imagen đơn lẻ (từ popup).
+        Sử dụng ImageService để xử lý business logic, chỉ xử lý UI callbacks ở đây.
         """
         with keep_awake("Imagen batch generation"):
-
-            worker_log_prefix = "[ImagenWorkerThread_Imagen3_Correct]"
+            worker_log_prefix = "[ImagenWorkerThread_Refactored]"
             logging.info(f"{worker_log_prefix} Bắt đầu tạo {number_of_images} ảnh với prompt: '{prompt[:50]}...'")
 
-            saved_image_paths = []
-            error_message = None
+            # Lấy API key
+            gemini_api_key = self.gemini_key_var.get()
+            if not gemini_api_key:
+                error_message = "Lỗi: Vui lòng cấu hình Gemini API Key."
+                self.after(0, self._handle_imagen_generation_completion, False, [], error_message)
+                return
 
-            try:
-                # --- 1. Import và cấu hình (Sử dụng google.genai như bạn muốn) ---
-                from google import genai
-                from google.genai import types
-                from PIL import Image
-                from io import BytesIO
+            self.after(0, lambda: self.update_status(f"🖼 Imagen 3: Đang vẽ {number_of_images} ảnh..."))
 
-                gemini_api_key = self.gemini_key_var.get()
-                if not gemini_api_key:
-                    error_message = "Lỗi: Vui lòng cấu hình Gemini API Key."
-                    raise ValueError(error_message)
+            # Gọi Image Service để tạo ảnh
+            # Note: Single prompt, tạo number_of_images với prompt đó
+            saved_image_paths, error_message = self.image_service.generate_imagen_images(
+                prompts=[prompt],  # Single prompt
+                num_images_per_prompt=number_of_images,
+                output_folder=output_folder,
+                api_key=gemini_api_key,
+                aspect_ratio=aspect_ratio,
+                style_prompt_fragment="",  # Không có style fragment cho single generation
+                negative_prompt=negative_prompt,
+                stop_event=lambda: self.stop_event.is_set(),
+                max_retries_per_prompt=2,
+                retry_delay_seconds=5.0
+            )
 
-                # Khởi tạo client
-                client = genai.Client(api_key=gemini_api_key)
+            # Track API calls nếu thành công
+            if saved_image_paths:
+                self._track_api_call(service_name="imagen_images", units=len(saved_image_paths))
 
-                self.after(0, lambda: self.update_status(f"🖼 Imagen 3: Đang vẽ {number_of_images} ảnh..."))
-
-                # --- 2. Xây dựng prompt và config cho Imagen 3 ---
-                # Imagen 3 hiện tại hỗ trợ tốt nhất câu lệnh tiếng Anh
-                # Bạn có thể cân nhắc thêm một bước dịch prompt nếu người dùng nhập tiếng Việt
-                # Ví dụ: full_prompt = f"A photorealistic image of: {prompt}"
-                full_prompt = prompt # Tạm thời giữ nguyên prompt người dùng nhập
-
-                # Tạo đối tượng config cho việc tạo ảnh
-                image_gen_config = types.GenerateImagesConfig(
-                    number_of_images=number_of_images,
-                    aspect_ratio=aspect_ratio
-                    # Bạn có thể thêm các tham số khác ở đây nếu muốn
-                    # person_generation="allow_adult" 
-                )
-                
-                logging.info(f"{worker_log_prefix} Đang gọi client.models.generate_images(...) với model 'imagen-3.0-generate-002'")
-                # --- 3. Gọi API tạo ảnh (Hàm đúng) ---
-
-                # --- BẮT ĐẦU SỬA LỖI - PHIÊN BẢN 3 (GỘP PROMPT) ---
-
-                # Lấy prompt gốc từ tham số
-                base_prompt = prompt 
-                
-                # Tạo chuỗi các từ khóa phủ định
-                # Tham số 'negative_prompt' là chuỗi bạn nhập từ cửa sổ "Tạo ảnh Imagen"
-                negative_keywords = "text, words, letters, writing, typography, signs, banners, logos"
-                if negative_prompt:
-                    negative_keywords = f"{negative_prompt}, {negative_keywords}"
-                
-                # --- THAY ĐỔI QUAN TRỌNG: GỘP PROMPT VÀ NEGATIVE PROMPT ---
-                # Thêm các từ khóa phủ định vào cuối prompt chính để hướng dẫn AI
-                full_prompt = f"{base_prompt}, cinematic, photography, sharp, high quality, (without: {negative_keywords})"
-                
-                logging.info(f"Prompt cuối cùng đã gộp (gửi cho API): {full_prompt}")
-                
-                # Tạo config cơ bản (KHÔNG CÓ negative_prompt)
-                image_gen_config = types.GenerateImagesConfig(
-                    number_of_images=number_of_images,
-                    aspect_ratio=aspect_ratio
-                )
-                
-                logging.info(f"{worker_log_prefix} Đang gọi client.models.generate_images(...) với model 'imagen-3.0-generate-002'")
-                
-                # Gọi API chỉ với prompt đã gộp
-                response = client.models.generate_images(
-                    model='imagen-3.0-generate-002',
-                    prompt=full_prompt, # <-- Truyền prompt đã gộp vào đây
-                    config=image_gen_config
-                )
-
-                # --- 4. Xử lý và lưu ảnh (Response đúng) ---
-                # Lặp qua các ảnh được tạo trong response
-                for generated_image in response.generated_images:
-                    if self.stop_event.is_set():
-                        error_message = "Đã dừng bởi người dùng."
-                        break
-
-                    # Lấy dữ liệu bytes của ảnh
-                    image_bytes = generated_image.image.image_bytes
-
-                    # Lưu file
-                    current_timestamp = int(time.time())
-                    safe_prompt_part = create_safe_filename(prompt, max_length=30)
-                    file_name = f"imagen3_{safe_prompt_part}_{current_timestamp}_{len(saved_image_paths)+1}.png"
-                    file_path = os.path.join(output_folder, file_name)
-                    
-                    with open(file_path, "wb") as f:
-                        f.write(image_bytes)
-                    
-                    saved_image_paths.append(file_path)
-                    logging.info(f"{worker_log_prefix} Đã lưu ảnh thành công: {file_path}")
-
-                # Đếm Số lần gọi API
-                if response.generated_images:
-                    num_generated = len(response.generated_images)
-                    logging.info(f"{worker_log_prefix} Gọi hàm _track_api_call cho {num_generated} ảnh Imagen.")
-                    # Gọi hàm của app chính để cập nhật với đúng service_name
-                    self._track_api_call(service_name="imagen_images", units=num_generated)
-
-                if self.stop_event.is_set():
-                    raise InterruptedError(error_message or "Đã dừng bởi người dùng.")
-
-            except ImportError as e:
-                error_message = f"Lỗi thiếu thư viện: {e}. Vui lòng chạy: pip install google-genai pillow"
-                logging.critical(f"{worker_log_prefix} {error_message}")
-            except Exception as e:
-                # Bắt các lỗi cụ thể từ API nếu có, ví dụ như lỗi xác thực, lỗi do prompt bị chặn...
-                error_message = f"Lỗi khi gọi API Imagen 3: {type(e).__name__} - {str(e)}"
-                logging.error(f"{worker_log_prefix} {error_message}", exc_info=True)
-            finally:
-                # Gọi hàm callback trên luồng chính để xử lý kết quả
+            # Gọi callback để xử lý kết quả
                 is_success = (error_message is None and saved_image_paths)
                 self.after(0, self._handle_imagen_generation_completion, 
                            is_success, 
@@ -14159,38 +13399,22 @@ class SubtitleApp(ctk.CTk):
     # Hàm logic: Chạy model Whisper để tạo phụ đề từ file media    
     def run_whisper_engine(self, input_file, model_name, fmt, lang, output_dir):
         """
-        Chạy Whisper transcription bằng model đã được load lên device cụ thể.
-        Hàm này không tự quyết định device nữa mà dựa vào self.loaded_model_device.
+        [REFACTORED] Chạy Whisper transcription bằng model đã được load.
+        Sử dụng ModelService để xử lý business logic, chỉ xử lý UI/logging ở đây.
         """
         # Kiểm tra các điều kiện cần thiết
-        if self.whisper_model is None:
-            # Ghi log rõ hơn tên model đang được mong đợi nhưng chưa load
+        if not self.model_service.is_model_loaded():
             current_expected_model = self.model_var.get()
-            logging.error(f"Model Whisper '{current_expected_model}' chưa được load vào self.whisper_model.")
+            logging.error(f"Model Whisper '{current_expected_model}' chưa được load.")
             raise RuntimeError(f"Model Whisper '{current_expected_model}' chưa được load.")
-        if not HAS_WHISPER:
-             logging.error("Thư viện Whisper chưa được cài đặt.")
-             raise RuntimeError("Thư viện Whisper chưa được cài đặt.")
-        if self.loaded_model_device is None:
-             logging.error("Chưa xác định được device mà model đang chạy trên đó (self.loaded_model_device is None).")
-             raise RuntimeError("Chưa xác định được device model đang chạy.")
-
-        # --- Đặt transcribe_options dựa trên device model đang chạy ---
-        # Nếu model đang chạy trên CUDA, thì bật fp16
-        use_fp16 = (self.loaded_model_device == 'cuda')
-
-        transcribe_options = {
-            'fp16': use_fp16,
-            'patience': 2.0,
-            'beam_size': 5,             
-            'no_speech_threshold': 0.45, # Giữ nguyên để tạo khoảng nghỉ
-            'logprob_threshold': -0.8,  # Giữ nguyên để tăng độ ổn định
-        }
-
-        if lang != "auto":
-            transcribe_options['language'] = lang
+        
+        # Đồng bộ state từ ModelService
+        self.whisper_model = self.model_service.current_model
+        self.loaded_model_name = self.model_service.model_name
+        self.loaded_model_device = self.model_service.device
             
         # Ghi log chi tiết về tác vụ sắp thực hiện
+        use_fp16 = (self.loaded_model_device == 'cuda')
         logging.info(
             f"[{threading.current_thread().name}] "
             f"Đang chạy Whisper transcribe (Model: '{self.loaded_model_name}' "
@@ -14198,47 +13422,32 @@ class SubtitleApp(ctk.CTk):
             f"fp16: {use_fp16}, lang: {lang}) "
             f"trên file: {os.path.basename(input_file)}"
         )
-        # --- Thực hiện transcribe (Không truyền device=...) ---
-        try:
-            # Model đã nằm trên device đúng (do logic load model xử lý), chỉ cần gọi transcribe
-            # với các tùy chọn decoding (như fp16, language)
-            result = self.whisper_model.transcribe(input_file, **transcribe_options)
-            logging.info(f"[{threading.current_thread().name}] Hoàn tất tạo phụ đề. Tìm thấy {len(result.get('segments', []))} đoạn.")
-        except Exception as transcribe_e:
-             # Bắt lỗi có thể xảy ra trong quá trình transcribe
-             logging.error(f"[{threading.current_thread().name}] Lỗi trong quá trình transcribe trên device '{self.loaded_model_device}': {transcribe_e}", exc_info=True)
-             # Ném lại lỗi để luồng xử lý bên ngoài (task_subtitle_threaded) bắt được
-             raise transcribe_e
-        # --- Kết thúc transcribe ---
-
-        # --- Định dạng và lưu file output (Giữ nguyên logic cũ) ---
+        
+        # Định dạng và lưu file output
         base_name = os.path.splitext(os.path.basename(input_file))[0]
         sub_name = f"{base_name}.{fmt}"
         sub_path = os.path.join(output_dir, sub_name)
-        # Đảm bảo thư mục output tồn tại
+        
         try:
-             os.makedirs(output_dir, exist_ok=True)
-        except OSError as mkdir_err:
-             logging.error(f"Không thể tạo thư mục output '{output_dir}': {mkdir_err}")
-             raise # Không thể tiếp tục nếu không tạo được thư mục
-
-        # Ghi file output
-        try:
-            with open(sub_path, "w", encoding="utf-8") as f:
-                if fmt == 'txt':
-                    f.write(result["text"])
-                elif fmt == 'srt':
-                    write_srt(f, result['segments'])
-                elif fmt == 'vtt':
-                    write_vtt(f, result['segments'])
-                else:
-                    logging.warning(f"Định dạng '{fmt}' không được hỗ trợ ghi trực tiếp. Đang lưu dưới dạng TXT.")
-                    f.write(result["text"])
-            logging.info(f"[{threading.current_thread().name}] Đã ghi file phụ đề: {sub_path}")
-            return sub_path # Trả về đường dẫn file đã tạo
-        except Exception as write_e:
-            logging.error(f"[{threading.current_thread().name}] Lỗi khi ghi file phụ đề '{sub_path}': {write_e}", exc_info=True)
-            raise # Ném lại lỗi ghi file
+            # Gọi ModelService để transcribe và save
+            saved_path = self.model_service.transcribe_and_save(
+                audio_path=input_file,
+                output_path=sub_path,
+                output_format=fmt,
+                language=lang if lang != "auto" else None,
+                fp16=use_fp16,
+                patience=2.0,
+                beam_size=5,
+                no_speech_threshold=0.45,
+                logprob_threshold=-0.8
+            )
+            
+            logging.info(f"[{threading.current_thread().name}] Đã ghi file phụ đề: {saved_path}")
+            return saved_path
+            
+        except Exception as e:
+            logging.error(f"[{threading.current_thread().name}] Lỗi trong quá trình transcribe/ghi file: {e}", exc_info=True)
+            raise
 
 
 #--------------------------
@@ -14892,6 +14101,8 @@ class SubtitleApp(ctk.CTk):
         """
         Dịch một danh sách các chuỗi văn bản bằng OpenAI API (ChatGPT),
         có hỗ trợ lựa chọn phong cách dịch.
+        
+        [REFACTORED] Sử dụng AIService để xử lý translation logic.
 
         Args:
             text_list (list): Danh sách các chuỗi cần dịch.
@@ -14902,124 +14113,62 @@ class SubtitleApp(ctk.CTk):
             list or None: Danh sách các chuỗi đã dịch (hoặc gốc nếu lỗi),
                           hoặc None nếu có lỗi nghiêm trọng (thiếu key/thư viện).
         """
-        # --- Kiểm tra thư viện và API Key (Giữ nguyên) ---
-        if not HAS_OPENAI or OpenAI is None:
-            logging.error("Thư viện OpenAI không khả dụng để gọi API.")
-            # Có thể raise lỗi ở đây để hàm gọi xử lý rõ ràng hơn thay vì trả về None âm thầm
-            # raise ImportError("Thư viện OpenAI chưa được cài đặt.") 
-            return None # Hoặc giữ nguyên trả về None
-
+        # Lấy API key
         api_key = self.openai_key_var.get()
         if not api_key:
             logging.error("OpenAI API Key bị thiếu trong cấu hình.")
             self.after(0, lambda: messagebox.showerror("Thiếu Key OpenAI",
                                                        "Vui lòng cấu hình OpenAI API Key trong 'Cài đặt API Keys'.",
                                                        parent=self))
-            # raise ValueError("Thiếu OpenAI API Key.") # Có thể raise lỗi
-            return None # Hoặc giữ nguyên trả về None
-
-        # --- Lấy phong cách dịch đã chọn ---
-        # Đọc trực tiếp từ biến StringVar của lớp SubtitleApp
-        selected_style = "Mặc định (trung tính)" # Giá trị mặc định an toàn
-        try:
-             if hasattr(self, 'openai_translation_style_var'):
-                 selected_style = self.openai_translation_style_var.get()
-                 # Lấy phần chính của phong cách (ví dụ: "Cổ trang" từ "Cổ trang (historical/ancient)")
-                 # để đưa vào prompt cho gọn, hoặc dùng cả chuỗi nếu muốn rõ ràng hơn với AI
-                 # Tạm thời dùng cả chuỗi để AI dễ hiểu ngữ cảnh hơn
-                 style_for_prompt = selected_style 
-                 logging.info(f"Sẽ yêu cầu dịch OpenAI với phong cách: '{style_for_prompt}'")
-             else:
-                 logging.warning("Không tìm thấy biến openai_translation_style_var. Sử dụng phong cách mặc định.")
-                 style_for_prompt = "neutral" # Mặc định nếu biến không tồn tại
-        except Exception as e_get_style:
-            logging.error(f"Lỗi khi lấy phong cách dịch OpenAI: {e_get_style}. Sử dụng phong cách mặc định.")
-            style_for_prompt = "neutral"
-
-        # --- Khởi tạo OpenAI client (Giữ nguyên) ---
-        try:
-            client = OpenAI(api_key=api_key, timeout=60.0) # timeout=60 giây
-        except Exception as e_client:
-            logging.error(f"Lỗi khi khởi tạo OpenAI client: {e_client}", exc_info=True)
-            self.after(0, lambda err=str(e_client): messagebox.showerror("Lỗi Khởi tạo OpenAI",
-                                                                       f"Không thể khởi tạo kết nối đến OpenAI:\n{err}",
-                                                                       parent=self))
             return None
 
-        # --- Vòng lặp dịch từng dòng (Giữ nguyên cấu trúc) ---
-        translated_texts = []
-        num_lines = len(text_list)
-        source_lang_name = source_lang if source_lang and source_lang != 'auto' else "the original language"
-        logging.info(f"Đang gửi {num_lines} dòng tới OpenAI API để dịch sang '{target_lang}' (Phong cách: {style_for_prompt})...")
+        # Lấy phong cách dịch đã chọn
+        selected_style = "Mặc định (trung tính)"
+        try:
+            if hasattr(self, 'openai_translation_style_var'):
+                selected_style = self.openai_translation_style_var.get()
+                logging.info(f"Sẽ yêu cầu dịch OpenAI với phong cách: '{selected_style}'")
+            else:
+                logging.warning("Không tìm thấy biến openai_translation_style_var. Sử dụng phong cách mặc định.")
+        except Exception as e_get_style:
+            logging.error(f"Lỗi khi lấy phong cách dịch OpenAI: {e_get_style}. Sử dụng phong cách mặc định.")
 
-        for i, text_to_translate in enumerate(text_list):
-            if self.stop_event.is_set():
-                logging.warning("Yêu cầu dừng trong quá trình dịch OpenAI.")
-                return translated_texts 
-
-            if not text_to_translate.strip():
-                translated_texts.append("")
-                continue
-
-            # === XÂY DỰNG PROMPT (ĐÃ THÊM YÊU CẦU PHONG CÁCH) ===
-            # Xác định phần mô tả phong cách cho prompt
-            style_instruction = f"in a '{style_for_prompt}' style"
-            # Nếu là mặc định, có thể không cần thêm gì hoặc nói rõ là neutral
-            if "Mặc định" in style_for_prompt or style_for_prompt.lower() == "neutral":
-                 style_instruction = "in a neutral style" 
-            # Nếu là cổ trang, có thể cần hướng dẫn chi tiết hơn? (Tùy chọn)
-            elif "Cổ trang" in style_for_prompt:
-                 style_instruction = "in a style suitable for historical or ancient contexts (e.g., historical drama, classic literature)"
-            # Bạn có thể thêm các elif khác cho các phong cách đặc biệt cần hướng dẫn rõ hơn
-
-            prompt_message = (
-                f"You are a highly skilled translator. Translate the following text "
-                f"from {source_lang_name} to {target_lang} {style_instruction}. " # <== THÊM YÊU CẦU PHONG CÁCH
-                f"IMPORTANT: Respond ONLY with the translated text itself, without any introductory phrases, explanations, quotation marks, or markdown formatting."
-                f"\n\nText to translate:\n---\n{text_to_translate}\n---"
-                f"\n\nTranslated text:"
+        # Gọi AI Service để dịch
+        try:
+            translated_texts, error_message = self.ai_service.translate_with_openai(
+                text_list=text_list,
+                target_lang=target_lang,
+                api_key=api_key,
+                source_lang=source_lang,
+                translation_style=selected_style,
+                model_name="gpt-3.5-turbo",
+                stop_event=lambda: self.stop_event.is_set()
             )
-            # Log prompt để debug nếu cần (có thể chứa nội dung nhạy cảm, cân nhắc khi bật)
-            # logging.debug(f"Prompt gửi đến OpenAI (dòng {i+1}):\n{prompt_message}")
+            
+            if error_message:
+                logging.error(f"Lỗi khi dịch OpenAI: {error_message}")
+                # Nếu có lỗi nhưng vẫn có một phần kết quả, trả về phần đó
+                if translated_texts:
+                    return translated_texts
+                # Nếu lỗi nghiêm trọng, hiển thị messagebox
+                self.after(0, lambda err=error_message: messagebox.showerror("Lỗi OpenAI API",
+                                                                           f"Đã xảy ra lỗi khi liên lạc với OpenAI:\n{err}",
+                                                                       parent=self))
+                return None
 
-            # === Gọi API (Giữ nguyên cấu trúc gọi) ===
-            try:
-                response = client.chat.completions.create(
-                    model="gpt-3.5-turbo", # Hoặc model bạn muốn dùng
-                    messages=[
-                        {"role": "user", "content": prompt_message}
-                    ],
-                    temperature=0.2, 
-                    max_tokens=int(len(text_to_translate) * 2.5) + 60, # Tăng nhẹ max_tokens dự phòng
-                )
-                
-                translated_line = response.choices[0].message.content.strip()
-
-                # Xử lý thêm nếu AI trả về trong dấu ngoặc kép hoặc markdown
-                if translated_line.startswith('"') and translated_line.endswith('"'):
-                   translated_line = translated_line[1:-1].strip()
-                # Có thể thêm xử lý markdown khác nếu cần
-
-                translated_texts.append(translated_line)
-                # logging.debug(f"  -> Dòng {i+1} OK: '{translated_line[:50]}...'")
-
-                time.sleep(0.3) # Giữ độ trễ nhỏ
-
-            except Exception as api_call_error:
-                logging.error(f"Lỗi khi gọi API OpenAI cho dòng {i+1}: {api_call_error}", exc_info=False)
-                # Giữ lại dòng gốc nếu có lỗi API cho dòng đó
-                translated_texts.append(text_to_translate) 
-                time.sleep(1) 
-
-        logging.info(f"OpenAI API đã xử lý xong {len(translated_texts)} dòng.")
-        return translated_texts
-
-        # except Exception as e:
-        #     logging.error(f"Lỗi nghiêm trọng khi sử dụng OpenAI API: {e}", exc_info=True)
-        #     self.after(0, lambda err=str(e): messagebox.showerror("Lỗi OpenAI API",
-        #                                                            f"Đã xảy ra lỗi khi liên lạc với OpenAI:\n{err}",
-        #                                                            parent=self))
-        #     return None
+        except Exception as e:
+            logging.error(f"Lỗi nghiêm trọng khi sử dụng AI Service: {e}", exc_info=True)
+            self.after(0, lambda err=str(e): messagebox.showerror("Lỗi AI Service",
+                                                                  f"Đã xảy ra lỗi khi gọi AI Service:\n{err}",
+                                                                  parent=self))
+            return None
+        
+        # ====================================================================
+        # CODE CŨ ĐÃ ĐƯỢC DI CHUYỂN SANG services/ai_service.py
+        # ====================================================================
+        # Code cũ từ line 14905 đến 15015 đã được refactor vào AIService.translate_with_openai()
+        # Giữ lại comment này để tham khảo trong tương lai nếu cần
+        # ====================================================================
         
 
 
@@ -15480,43 +14629,17 @@ class SubtitleApp(ctk.CTk):
 # Hàm logic: Xác định thiết bị (device) nên dùng để tải model Whisper
     def _determine_target_device(self):
         """
-        Xác định device nên dùng ('cuda' hoặc 'cpu').
-        PHIÊN BẢN SỬA LỖI: Ưu tiên kiểm tra torch.cuda.is_available() trước tiên.
+        [REFACTORED] Xác định device nên dùng ('cuda' hoặc 'cpu').
+        Sử dụng ModelService để xác định device, đồng bộ state với Piu.py.
         """
-        try:
-            import torch # Import torch để thực hiện kiểm tra
-            
-            # --- KIỂM TRA QUAN TRỌNG NHẤT: PyTorch có thấy CUDA không? ---
-            if not torch.cuda.is_available():
-                logging.warning("torch.cuda.is_available() is False. BẮT BUỘC sử dụng CPU.")
-                return "cpu"
-            # --- KẾT THÚC KIỂM TRA ---
-
-            # Nếu PyTorch thấy CUDA, tiếp tục với logic cũ để kiểm tra VRAM
-            if self.cuda_status != 'AVAILABLE':
-                logging.debug("Xác định device: CPU (do CUDA status từ nvidia-smi không phải AVAILABLE, dù torch thấy CUDA?)") # Lạ nhưng để an toàn
-                return "cpu"
-
-            selected_model = self.model_var.get()
-            required_vram = WHISPER_VRAM_REQ_MB.get(selected_model, 0)
-
-            if self.gpu_vram_mb > 0 and required_vram > 0:
-                if self.gpu_vram_mb < required_vram:
-                    logging.warning(f"VRAM GPU ({self.gpu_vram_mb / 1024:.1f}GB) không đủ cho model '{selected_model}' (~{required_vram / 1024:.1f}GB). Sẽ tự động dùng CPU.")
-                    return "cpu"
-                else:
-                    logging.debug(f"Xác định device: CUDA (torch thấy CUDA và VRAM đủ: {self.gpu_vram_mb}MB >= {required_vram}MB)")
-                    return "cuda"
-            else:
-                logging.debug("Xác định device: CUDA (torch thấy CUDA, không có thông tin VRAM hoặc model không yêu cầu)")
-                return "cuda"
-
-        except ImportError:
-            logging.error("Lỗi: Không thể import thư viện 'torch'. Sẽ dùng CPU.")
-            return "cpu"
-        except Exception as e:
-            logging.error(f"Lỗi không mong muốn trong _determine_target_device: {e}. Sẽ dùng CPU.")
-            return "cpu"
+        selected_model = self.model_var.get()
+        device = self.model_service.get_recommended_device(selected_model)
+        
+        # Đồng bộ state với Piu.py
+        self.cuda_status = self.model_service.cuda_status
+        self.gpu_vram_mb = self.model_service.gpu_vram_mb
+        
+        return device
     
 
 # Hàm Tải model Whisper nếu cần, dựa trên tên model VÀ thiết bị đích. ---
@@ -15606,108 +14729,40 @@ class SubtitleApp(ctk.CTk):
 
 # Hàm logic (chạy trong luồng): Tải model Whisper lên thiết bị cụ thể
     def _load_whisper_model_thread(self, target_model, target_device, callback=None):
-        """(ĐÃ CẬP NHẬT) Tải model Whisper an toàn cho GUI: vô hiệu tqdm, redirect stdout/stderr, và khôi phục trạng thái sau khi load.
-           + Fallback: nếu load CUDA lỗi -> tự chuyển sang CPU."""
-        import os, sys, gc
-        from contextlib import redirect_stdout, redirect_stderr
-
+        """
+        [REFACTORED] Tải model Whisper an toàn cho GUI.
+        Sử dụng ModelService để xử lý business logic, chỉ xử lý UI callbacks ở đây.
+        """
         with keep_awake(f"Loading Whisper model {target_model}"):
             try:
                 # Báo UI
                 self.after(0, lambda tm=target_model, td=target_device:
                            self.update_status(f"⏳ Đang tải/nạp model: {tm} ({td})... (Có thể mất vài phút)"))
-                logging.info(f"Bắt đầu tải/nạp model Whisper: {target_model} lên device {target_device}")
+                logging.info(f"[LoadModelThread] Bắt đầu tải/nạp model Whisper: {target_model} lên device {target_device}")
 
-                # Kiểm tra thư viện
-                if not HAS_WHISPER:
-                    raise ImportError("Không tìm thấy thư viện Whisper đã được cài đặt.")
-
-                # Dọn model cũ để giải phóng VRAM/RAM
-                if getattr(self, "whisper_model", None) is not None:
-                    logging.debug("Đang dọn dẹp model Whisper cũ khỏi bộ nhớ...")
-                    del self.whisper_model
-                    self.whisper_model = None
-                    gc.collect()
-                    if str(target_device).lower() == "cuda":
-                        try:
-                            import torch
-                            if torch.cuda.is_available():
-                                torch.cuda.empty_cache()
-                        except Exception:
-                            pass
-                    logging.debug("Dọn dẹp model cũ hoàn tất.")
-
-                # ------------------ FIX tqdm / sys.stderr ------------------
-                # Lưu lại trạng thái biến môi trường để khôi phục về sau
-                _old_tqdm_disable = os.environ.get("TQDM_DISABLE", None)
-
-                # Mở /dev/null (Windows cũng OK vì os.devnull)
-                with open(os.devnull, "w", encoding="utf-8") as fnull:
-                    # Nếu sys.stderr hiện là None (thường gặp trong GUI), tạm gán về fnull
-                    _orig_stderr = sys.stderr
-                    _patched_stderr = False
-                    if _orig_stderr is None:
-                        sys.stderr = fnull
-                        _patched_stderr = True
-
-                    try:
-                        # Tắt progress bar của tqdm trong lúc load
-                        os.environ["TQDM_DISABLE"] = "1"
-                        logging.debug("Đã đặt TQDM_DISABLE=1 trong lúc gọi whisper.load_model().")
-
-                        # Chuyển hướng cả stdout & stderr về fnull để mọi thư viện con không in/ghi ra console
-                        with redirect_stdout(fnull), redirect_stderr(fnull):
-                            logging.debug(f"Gọi whisper.load_model('{target_model}', device='{target_device}')...")
-
-                            # >>> Fallback CUDA -> CPU
-                            try:
-                                loaded_model = whisper.load_model(target_model, device=target_device)
-                            except Exception as e1:
-                                if str(target_device).lower() == 'cuda':
-                                    logging.warning(f"CUDA load thất bại: {e1}. Fallback về CPU...")
-                                    # Báo nhẹ lên status (không popup)
-                                    self.after(0, lambda: self.update_status("⚠️ CUDA lỗi, đang chuyển sang CPU..."))
-                                    try:
-                                        loaded_model = whisper.load_model(target_model, device="cpu")
-                                        target_device = "cpu"  # cập nhật device thực tế đã dùng
-                                    except Exception as e2:
-                                        # Ném lại lỗi gốc + lỗi fallback cho khối except ngoài xử lý
-                                        raise RuntimeError(f"CUDA error: {e1}; CPU fallback error: {e2}") from e2
-                                else:
-                                    # Không phải CUDA thì để khối except ngoài xử lý
-                                    raise
-                            # <<< Fallback end
-
-                    finally:
-                        # Khôi phục biến môi trường TQDM_DISABLE như cũ
-                        if _old_tqdm_disable is None:
-                            os.environ.pop("TQDM_DISABLE", None)
-                        else:
-                            os.environ["TQDM_DISABLE"] = _old_tqdm_disable
-
-                        # Trả lại sys.stderr nếu mình có “vá tạm”
-                        if _patched_stderr:
-                            sys.stderr = _orig_stderr
-                # ---------------- KẾT THÚC FIX tqdm / sys.stderr ------------
-
-                logging.info(f"whisper.load_model('{target_model}', device='{target_device}') hoàn tất.")
-
-                # Thành công → cập nhật về luồng chính
-                self.after(0, self._update_loaded_model, loaded_model, target_model, target_device, callback)
-
-            except ImportError as e:
-                logging.error(f"Lỗi import thư viện whisper khi đang tải model: {e}")
-                self.after(0, lambda: messagebox.showerror(
-                    "Lỗi Import",
-                    "Không tìm thấy thư viện Whisper. Vui lòng cài đặt:\n\npip install -U openai-whisper"
-                ))
-                self.after(0, self._update_loaded_model, None, None, None, callback)
+                # Gọi ModelService để load model
+                loaded_model, loaded_model_name, actual_device, error_message = self.model_service.load_model(
+                    model_name=target_model,
+                    device=target_device,
+                    force_reload=False,
+                    stop_event=lambda: self.stop_event.is_set()
+                )
+                
+                # Đồng bộ state với Piu.py
+                if loaded_model:
+                    target_device = actual_device  # Update với device thực tế đã dùng
+                    logging.info(f"[LoadModelThread] Model '{loaded_model_name}' loaded on '{actual_device}' successfully.")
+                
+                # Cập nhật về luồng chính
+                self.after(0, self._update_loaded_model, loaded_model, loaded_model_name, actual_device, callback)
 
             except Exception as e:
-                logging.error(f"Lỗi tải model Whisper '{target_model}' lên '{target_device}': {e}", exc_info=True)
-                self.after(0, lambda err=e, tm=target_model, td=target_device: messagebox.showerror(
+                logging.error(f"[LoadModelThread] Lỗi tải model Whisper '{target_model}': {e}", exc_info=True)
+                error_msg = f"Đã xảy ra lỗi khi tải model '{target_model}': {e}"
+                self.after(0, lambda err=error_msg, tm=target_model, td=target_device: messagebox.showerror(
                     "Lỗi Tải Model",
-                    f"Đã xảy ra lỗi khi tải model '{tm}' lên thiết bị '{td}':\n{err}"
+                    f"Đã xảy ra lỗi khi tải model '{tm}' lên thiết bị '{td}':\n{err}",
+                    parent=self
                 ))
                 self.after(0, self._update_loaded_model, None, None, None, callback)
 
@@ -15715,18 +14770,26 @@ class SubtitleApp(ctk.CTk):
                 # Luôn trả UI về trạng thái bình thường
                 self.after(0, self._reset_model_loading_ui)
                 self.after(0, lambda: setattr(self, "is_loading_model", False))
-                logging.debug(f"Hoàn tất luồng tải cho model '{target_model}' device '{target_device}'.")
+                self.after(0, lambda: setattr(self.model_service, "is_loading_model", False))
+                logging.debug(f"[LoadModelThread] Hoàn tất luồng tải cho model '{target_model}' device '{target_device}'.")
 
 
 # Hàm callback: Cập nhật trạng thái model Whisper đã được tải (chạy trên luồng chính)
     def _update_loaded_model(self, model_object, model_name, loaded_device, callback=None):
         """
-        (ĐÃ SỬA LỖI) Callback để cập nhật trạng thái model, device,
-        và quan trọng là GỌI HÀM RESET UI TỔNG THỂ.
+        [REFACTORED] Callback để cập nhật trạng thái model, device.
+        Đồng bộ state giữa ModelService và Piu.py.
         """
+        # Đồng bộ state với Piu.py
         self.whisper_model = model_object
         self.loaded_model_name = model_name
         self.loaded_model_device = loaded_device
+        
+        # Đồng bộ state với ModelService (để đảm bảo đồng nhất)
+        if model_object:
+            self.model_service.current_model = model_object
+            self.model_service.model_name = model_name
+            self.model_service.device = loaded_device
         
         # Tắt cờ timer ngay khi có kết quả
         self.is_loading_model_for_timer = False
@@ -20884,10 +19947,16 @@ class SubtitleApp(ctk.CTk):
 
 # Hàm logic (chạy trong luồng): Kiểm tra trạng thái CUDA và VRAM GPU
     def check_cuda_status_thread(self, callback=None): 
-        """Chạy kiểm tra CUDA và lấy VRAM trong thread."""
+        """
+        [REFACTORED] Chạy kiểm tra CUDA và lấy VRAM trong thread.
+        Sử dụng ModelService để kiểm tra CUDA, đồng bộ state với Piu.py.
+        """
         logging.info("Bắt đầu kiểm tra trạng thái CUDA và VRAM (có callback)...")
-        # Gọi hàm is_cuda_available() đã sửa ở Bước 1, nhận về tuple
-        status, vram_mb = is_cuda_available()
+        # Gọi ModelService để kiểm tra CUDA
+        status, vram_mb = self.model_service.check_cuda_availability()
+        # Đồng bộ state với Piu.py
+        self.cuda_status = status
+        self.gpu_vram_mb = vram_mb
         # Lên lịch chạy hàm _update_cuda_status_ui trên luồng chính với cả status, vram_mb, và callback
         self.after(0, self._update_cuda_status_ui, status, vram_mb, callback) 
 
@@ -30813,66 +29882,28 @@ class SubtitleApp(ctk.CTk):
 # Thực hiện kiểm tra tính hợp lệ của OpenAI API Key (chạy trong luồng).
     def _perform_openai_key_check(self, api_key_to_test):
         """ 
-        Thực hiện kiểm tra OpenAI API Key (chạy trong thread) - BẢN NÂNG CẤP
-        Bằng cách thử một yêu cầu chat completion nhỏ.
+        [REFACTORED] Thực hiện kiểm tra OpenAI API Key (chạy trong thread).
+        Sử dụng AIService để test key, chỉ xử lý UI callback ở đây.
         """
-        logging.info(f"[API Check] Bắt đầu kiểm tra OpenAI Key (bản nâng cấp): ...{api_key_to_test[-4:]}")
-        status_message = "Lỗi không xác định."
-        status_color = "red"
+        logging.info(f"[API Check] Bắt đầu kiểm tra OpenAI Key: ...{api_key_to_test[-4:]}")
         
-        try:
-            from openai import OpenAI, RateLimitError, AuthenticationError, APIConnectionError, APIStatusError, APITimeoutError
-            HAS_OPENAI_LIBS_FOR_CHECK = True
-        except ImportError:
-            logging.error("[API Check] Thiếu thư viện OpenAI để kiểm tra key.")
-            status_message = "Lỗi: Thiếu thư viện OpenAI."
-            status_color = "red"
-            HAS_OPENAI_LIBS_FOR_CHECK = False
-
-        if HAS_OPENAI_LIBS_FOR_CHECK:
-            try:
-                test_client = OpenAI(api_key=api_key_to_test, timeout=15.0) 
-                
-                # --- THAY ĐỔI CHÍNH NẰM Ở ĐÂY ---
-                # Thay vì gọi client.models.list(), ta thử một yêu cầu chat nhỏ
-                # để đảm bảo key không chỉ hợp lệ mà còn có quyền sử dụng model.
-                logging.debug("[API Check] Đang gọi client.chat.completions.create() để kiểm tra...")
-                test_client.chat.completions.create(
-                    model="gpt-3.5-turbo",  # Dùng model rẻ và nhanh để test
-                    messages=[{"role": "user", "content": "test"}],
-                    max_tokens=1,          # Giới hạn output tối đa để tiết kiệm
-                    temperature=0          # Không cần sáng tạo
-                )
-                # --- KẾT THÚC THAY ĐỔI ---
-
-                logging.info(f"[API Check] Kiểm tra OpenAI Key thành công (đã thử Chat Completion).")
-                status_message = "Key hợp lệ! (Kết nối thành công)"
-                status_color = ("#0B8457", "lightgreen") # Xanh đậm cho nền sáng, xanh tươi cho nền tối
-
-            except AuthenticationError as e:
-                logging.warning(f"[API Check] Lỗi xác thực OpenAI: {e}")
-                status_message = "Lỗi: Key không đúng hoặc hết hạn."
-                status_color = "orange"
-            except RateLimitError as e:
-                logging.warning(f"[API Check] Lỗi giới hạn yêu cầu OpenAI: {e}")
-                status_message = "Lỗi: Vượt quá giới hạn request."
-                status_color = "orange"
-            except (APIConnectionError, APITimeoutError) as e:
-                logging.error(f"[API Check] Lỗi kết nối/timeout OpenAI: {e}")
-                status_message = "Lỗi: Không kết nối được OpenAI."
+        # Gọi AI Service để test key
+        is_valid, status_message = self.ai_service.test_openai_key(api_key_to_test)
+        
+        # Xác định màu sắc dựa trên kết quả
+        if is_valid:
+            status_color = ("#0B8457", "lightgreen")  # Xanh đậm cho nền sáng, xanh tươi cho nền tối
+        else:
+            # Xác định màu dựa trên message
+            if "thiếu" in status_message.lower() or "chưa được" in status_message.lower():
                 status_color = "red"
-            except APIStatusError as e: 
-                logging.error(f"[API Check] Lỗi trạng thái API OpenAI: {e.status_code} - {e.response}")
-                # Kiểm tra lỗi cụ thể do không có quyền truy cập model
-                if "does not exist or you do not have access to it" in str(e).lower():
-                    status_message = f"Lỗi: Key đúng, nhưng không có quyền truy cập model."
-                    status_color = "orange"
-                else:
-                    status_message = f"Lỗi API OpenAI: {e.status_code}"
-                    status_color = "red"
-            except Exception as e: 
-                logging.error(f"[API Check] Lỗi không xác định khi kiểm tra OpenAI Key: {e}", exc_info=True)
-                status_message = "Lỗi không xác định."
+            elif "không đúng" in status_message.lower() or "hết hạn" in status_message.lower():
+                status_color = "orange"
+            elif "vượt quá giới hạn" in status_message.lower():
+                status_color = "orange"
+            elif "không kết nối" in status_message.lower():
+                status_color = "red"
+            else:
                 status_color = "red"
 
         def _update_ui():
@@ -30907,91 +29938,27 @@ class SubtitleApp(ctk.CTk):
 # HÀM MỚI: Thực hiện kiểm tra tính hợp lệ của Gemini API Key (chạy trong luồng)
     def _perform_gemini_key_check(self, api_key_to_test):
         """ 
-        Thực hiện kiểm tra Gemini API Key (chạy trong thread).
-        PHIÊN BẢN NÂNG CẤP: Thử một lệnh generate_content nhỏ để kiểm tra sâu hơn.
+        [REFACTORED] Thực hiện kiểm tra Gemini API Key (chạy trong thread).
+        Sử dụng AIService để test key, chỉ xử lý UI callback ở đây.
         """
-        logging.info(f"[API Check] Bắt đầu kiểm tra Gemini Key (bản nâng cấp): ...{api_key_to_test[-4:]}")
-        status_message = "Lỗi không xác định."
-        status_color = "red"
-
-        try:
-            import google.generativeai as genai
-            from google.api_core import exceptions as google_api_exceptions
-
-            genai.configure(api_key=api_key_to_test)
-
-            logging.debug("[API Check] Đang thử kiểm tra API key bằng list_models()...")
-            
-            # Thử list_models() để kiểm tra API key (cách này ổn định hơn và không cần model name cụ thể)
-            models = genai.list_models()
-            
-            # Kiểm tra xem có model nào khả dụng không
-            model_names = [m.name for m in models]
-            logging.debug(f"[API Check] Số lượng models có sẵn: {len(model_names)}")
-            
-            # Nếu list_models() thành công và có models, API key đã hợp lệ
-            if not model_names:
-                raise Exception("Không tìm thấy model nào khả dụng.")
-            
-            # Thử test generate_content với một model nếu có thể (không bắt buộc)
-            tested_generate = False
-            for preferred_model in ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-pro', 'gemini-1.5-pro-latest']:
-                try:
-                    # Tìm model name đầy đủ từ danh sách
-                    full_model_name = None
-                    for m_name in model_names:
-                        if preferred_model in m_name.lower():
-                            full_model_name = m_name
-                            break
-                    
-                    if full_model_name:
-                        # Lấy short name từ full name (ví dụ: models/gemini-1.5-pro -> gemini-1.5-pro)
-                        short_name = full_model_name.split('/')[-1] if '/' in full_model_name else full_model_name
-                        logging.debug(f"[API Check] Đang thử test generate_content với model: {short_name}")
-                        model = genai.GenerativeModel(short_name)
-                        model.generate_content(
-                            "test", 
-                            generation_config=genai.types.GenerationConfig(max_output_tokens=1, temperature=0.0)
-                        )
-                        tested_generate = True
-                        logging.debug(f"[API Check] Test generate_content thành công với {short_name}")
-                        break
-                except Exception as test_e:
-                    # Bỏ qua lỗi khi test model này, thử model tiếp theo
-                    logging.debug(f"[API Check] Không thể test với {preferred_model}: {test_e}")
-                    continue
-            
-            if not tested_generate:
-                logging.debug("[API Check] Không test được generate_content, nhưng list_models() thành công nên API key vẫn hợp lệ.")
-
-            # Nếu list_models() thành công (đã đến đây), key và môi trường đều ổn.
-            status_message = "✅ Key hợp lệ! (Kết nối thành công)"
-            status_color = ("#0B8457", "lightgreen") # Xanh đậm cho nền sáng, xanh tươi cho nền tối
-            logging.info(f"[API Check] Kiểm tra Gemini Key thành công. Tìm thấy {len(model_names)} model(s) khả dụng.")
-
-        except google_api_exceptions.PermissionDenied as e:
-            logging.warning(f"[API Check] Lỗi xác thực Gemini: {e}")
-            status_message = "Lỗi: Key không đúng hoặc không có quyền."
-            status_color = "orange"
-        except google_api_exceptions.GoogleAPICallError as e:
-            # Lỗi này có thể do mạng hoặc các vấn đề kết nối khác
-            error_str = str(e)
-            if "404" in error_str or "not found" in error_str.lower():
-                logging.warning(f"[API Check] Lỗi model không tìm thấy: {e}")
-                status_message = "Lỗi: Model không khả dụng, nhưng API key có thể hợp lệ. Vui lòng thử lại."
+        logging.info(f"[API Check] Bắt đầu kiểm tra Gemini Key: ...{api_key_to_test[-4:]}")
+        
+        # Gọi AI Service để test key
+        is_valid, status_message = self.ai_service.test_gemini_key(api_key_to_test)
+        
+        # Xác định màu sắc dựa trên kết quả
+        if is_valid:
+            status_color = ("#0B8457", "lightgreen")  # Xanh đậm cho nền sáng, xanh tươi cho nền tối
+        else:
+            # Xác định màu dựa trên message
+            if "thiếu" in status_message.lower() or "chưa được" in status_message.lower():
+                status_color = "red"
+            elif "không đúng" in status_message.lower() or "hết hạn" in status_message.lower():
+                status_color = "orange"
+            elif "không kết nối" in status_message.lower() or "không thể" in status_message.lower():
+                status_color = "red"
             else:
-                logging.error(f"[API Check] Lỗi gọi API Google (có thể do mạng): {e}")
-                status_message = "Lỗi: Không kết nối được tới Google."
-            status_color = "red"
-        except Exception as e:
-            # Bắt tất cả các lỗi khác, bao gồm cả "Illegal header value" nếu nó xảy ra ở đây
-            logging.error(f"[API Check] Lỗi không xác định khi kiểm tra Gemini Key: {e}", exc_info=True)
-            # Kiểm tra xem có phải lỗi header không để đưa ra thông báo cụ thể
-            if "illegal header value" in str(e).lower():
-                status_message = "Lỗi: Key có vẻ đúng nhưng môi trường không hợp lệ (lỗi header)."
-            else:
-                status_message = f"Lỗi không xác định: {type(e).__name__}"
-            status_color = "red"
+                status_color = "red"
 
         def _update_ui():
             if self and self.winfo_exists():

@@ -119,11 +119,11 @@ class YouTubeUploadTab(ctk.CTkFrame):
         # Auto-upload checkbox
         self._create_youtube_auto_upload_section(left_upload_scrollable_content, card_bg_color)
 
-        # Thumbnail selection
-        self._create_youtube_thumbnail_section(left_upload_scrollable_content, card_bg_color)
-
         # Video information section
         self._create_youtube_video_info_section(left_upload_scrollable_content, card_bg_color)
+
+        # Thumbnail selection (nằm dưới checkbox "Thêm MH kết thúc" và trên "Phương thức Upload")
+        self._create_youtube_thumbnail_section(left_upload_scrollable_content, card_bg_color)
 
         # Upload method section
         self._create_youtube_upload_method_section(left_upload_scrollable_content, card_bg_color)
