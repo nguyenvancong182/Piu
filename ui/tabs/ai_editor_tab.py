@@ -1069,7 +1069,7 @@ QPP: Quach Piu Piu
             self.master_app.cfg["last_used_ai_engine_aie"] = selected_engine
             config_key = f"last_used_{'gemini' if 'Gemini' in selected_engine else 'gpt'}_prompt_ai_batch_editor"
             self.master_app.cfg[config_key] = prompt_text  # có thể là ""
-            self.master_app.save_current_config()
+            self.save_config()  # Gọi save_config() của tab thay vì master_app
 
             popup.destroy()
         
@@ -1119,13 +1119,7 @@ QPP: Quach Piu Piu
             logging.info("[AIEditorTab] 'Hẹn giờ tắt máy' đang TẮT.")
 
         # --- Lưu cài đặt trước khi chạy ---
-        self.master_app.cfg["ai_editor_output_folder"] = self.output_folder_var.get()
-        self.master_app.cfg["ai_editor_rename_enabled"] = self.rename_var.get()
-        self.master_app.cfg["ai_editor_rename_base_name"] = self.rename_base_name_var.get()
-        self.master_app.cfg["ai_editor_auto_naming_enabled"] = self.auto_naming_var.get()
-        self.master_app.cfg["ai_editor_series_name"] = self.series_name_var.get()
-        self.master_app.cfg["ai_editor_start_chapter"] = self.start_chapter_var.get()
-        self.master_app.save_current_config()
+        self.save_config()  # Gọi save_config() của tab
 
         # --- Khởi tạo lô ---
         self.batch_results = []
@@ -1356,6 +1350,35 @@ QPP: Quach Piu Piu
                             "Quá trình biên tập đã hoàn thành, nhưng đã xảy ra lỗi khi lưu file metadata. Vui lòng kiểm tra log.",
                             parent=self
                         )
+
+    def save_config(self):
+        """Lưu cấu hình AI Editor vào master_app.cfg"""
+        if not hasattr(self.master_app, 'cfg'):
+            logging.error("master_app không có thuộc tính cfg")
+            return
+        
+        # Lưu các cấu hình AI Editor
+        self.master_app.cfg["ai_editor_output_folder"] = self.output_folder_var.get()
+        self.master_app.cfg["ai_editor_rename_enabled"] = self.rename_var.get()
+        self.master_app.cfg["ai_editor_rename_base_name"] = self.rename_base_name_var.get()
+        self.master_app.cfg["ai_editor_auto_naming_enabled"] = self.auto_naming_var.get()
+        self.master_app.cfg["ai_editor_series_name"] = self.series_name_var.get()
+        self.master_app.cfg["ai_editor_start_chapter"] = self.start_chapter_var.get()
+        self.master_app.cfg["ai_editor_enable_chain"] = self.enable_production_chain_var.get()
+        self.master_app.cfg["ai_editor_chain_output_path"] = self.production_chain_output_path_var.get()
+        self.master_app.cfg["ai_editor_en_tts_mode"] = self.en_tts_mode_var.get()
+        self.master_app.cfg["ai_editor_auto_add_on_paste"] = self.auto_add_on_paste_var.get()
+        self.master_app.cfg["last_used_ai_engine_aie"] = self.current_engine
+        self.master_app.cfg["gpt_model_for_aie"] = self.gpt_model_var.get()
+        self.master_app.cfg["gemini_model_for_aie"] = self.gemini_model_var.get()
+        
+        # Lưu prompt (có thể là prompt VN hoặc EN tùy theo engine đã chọn)
+        if hasattr(self, 'current_engine') and hasattr(self, 'current_prompt'):
+            config_key = f"last_used_{'gemini' if 'Gemini' in self.current_engine else 'gpt'}_prompt_ai_batch_editor"
+            if self.current_prompt:
+                self.master_app.cfg[config_key] = self.current_prompt
+        
+        logging.debug("[AIEditorTab.save_config] Đã lưu cấu hình AI Editor vào master_app.cfg")
             
 
     def _update_status_aie(self, text):
